@@ -71,7 +71,7 @@ pub async fn send_and_confirm_transaction_with_execution_error(
     // Collect signatures from a quorum of authorities
     let committee = authority.clone_committee_for_testing();
     let certificate =
-        CertifiedTransaction::new(transaction.into_message(), vec![vote.clone()], &committee)
+        CertifiedTransaction::new(transaction.into_message(), &[vote.clone()], &committee)
             .unwrap()
             .verify(&committee)
             .unwrap();
@@ -239,7 +239,7 @@ pub fn init_certified_transaction(
     let epoch_store = authority_state.epoch_store_for_testing();
     CertifiedTransaction::new(
         transaction.into_message(),
-        vec![vote.auth_sig().clone()],
+        &[vote.auth_sig().clone()],
         epoch_store.committee(),
     )
     .unwrap()

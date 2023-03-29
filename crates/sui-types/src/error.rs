@@ -655,6 +655,7 @@ impl SuiError {
                 (false, true)
             }
             SuiError::ObjectLockConflict { .. } => (false, true),
+            SuiError::CertificateRequiresQuorum => (true, true),
 
             _ => (false, false),
         }
