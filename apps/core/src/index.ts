@@ -18,6 +18,7 @@ export * from './hooks/useGetNormalizedMoveStruct';
 export * from './PostHogAnalyticsProvider';
 export * from './utils/formatPercentageDisplay';
 export * from './hooks/useGetSystemState';
+export * from './utils/getRefGasPrice';
 export * from './hooks/useGetTimeBeforeEpochNumber';
 export * from './hooks/useGetLatestCheckpointSequenceNumber';
 export * from './hooks/useGetTotalTransactionBlocks';
