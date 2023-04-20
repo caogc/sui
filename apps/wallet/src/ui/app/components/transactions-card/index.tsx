@@ -52,6 +52,8 @@ export function TransactionCard({
     const executionStatus = getExecutionStatusType(txn);
     getTransactionKindName(transaction);
 
+    // const summ = useTransactionSummary({ transactionBlock: txn, address });
+
     // const objectId = useMemo(() => {
     //     return getTxnEffectsEventID(txn.events!, address)[0];
     // }, [address, txn.events]);

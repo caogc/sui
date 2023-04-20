@@ -6,6 +6,8 @@ import { TransactionBlock } from '@mysten/sui.js';
 import { useMemo, useState } from 'react';
 
 import { ConfirmationModal } from '../../../shared/ConfirmationModal';
+import { TransactionSummary } from '../summary';
+import { useTransactionSummary } from '../summary/useTransactionSummary';
 import { GasFees } from './GasFees';
 import { TransactionDetails } from './TransactionDetails';
 import { UserApproveContainer } from '_components/user-approve-container';
@@ -13,8 +15,6 @@ import { useAppDispatch, useSigner, useTransactionData } from '_hooks';
 import { type TransactionApprovalRequest } from '_payloads/transactions/ApprovalRequest';
 import { respondToTransactionRequest } from '_redux/slices/transaction-requests';
 import { PageMainLayoutTitle } from '_src/ui/app/shared/page-main-layout/PageMainLayoutTitle';
-
-import st from './TransactionRequest.module.scss';
 
 export type TransactionRequestProps = {
     txRequest: TransactionApprovalRequest;
@@ -24,18 +24,29 @@ export function TransactionRequest({ txRequest }: TransactionRequestProps) {
     const addressForTransaction = txRequest.tx.account;
     const signer = useSigner(addressForTransaction);
     const dispatch = useAppDispatch();
+
     const transaction = useMemo(() => {
         const tx = TransactionBlock.from(txRequest.tx.data);
         if (addressForTransaction) {
             tx.setSenderIfNotSet(addressForTransaction);
         }
+
         return tx;
     }, [txRequest.tx.data, addressForTransaction]);
+
     const { isLoading, isError } = useTransactionData(
         addressForTransaction,
         transaction
     );
     const [isConfirmationVisible, setConfirmationVisible] = useState(false);
+
+    const summary = useTransactionSummary({
+        transactionBlock: transaction,
+        address: addressForTransaction,
+    });
+
+    console.log(transaction);
+
     return (
         <>
             <UserApproveContainer
@@ -63,12 +74,14 @@ export function TransactionRequest({ txRequest }: TransactionRequestProps) {
                 approveLoading={isLoading || isConfirmationVisible}
             >
                 <PageMainLayoutTitle title="Approve Transaction" />
-                <section className={st.txInfo}>
-                    {/* MUSTFIX(chris) */}
-                    {/* <TransactionSummaryCard
-                    transaction={tx}
-                    address={addressForTransaction}
-                /> */}
+                <section className="-mx-5 bg-[#6FBCF01A]">
+                    <div>
+                        <div className="px-5 py-6">
+                            <TransactionSummary summary={summary} />
+                        </div>
+                    </div>
+                </section>
+                <section className="flex flex-col gap-4">
                     <GasFees
                         sender={addressForTransaction}
                         transaction={transaction}
