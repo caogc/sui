@@ -1,3 +1,5 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
 import {
     type DryRunTransactionBlockResponse,
     type SuiAddress,
@@ -5,15 +7,14 @@ import {
 } from '@mysten/sui.js';
 
 export type BalanceChangeSummary = {
-    type: string;
+    coinType: string;
     amount: string;
     recipient?: SuiAddress;
     owner?: SuiAddress;
 };
 
 export const getBalanceChangeSummary = (
-    transaction: DryRunTransactionBlockResponse | SuiTransactionBlockResponse,
-    currentAddress: SuiAddress | null
+    transaction: DryRunTransactionBlockResponse | SuiTransactionBlockResponse
 ) => {
     const { balanceChanges, effects } = transaction;
     if (!balanceChanges || !effects) return null;
@@ -23,23 +24,26 @@ export const getBalanceChangeSummary = (
             (balanceChange) =>
                 typeof balanceChange.owner === 'object' &&
                 'AddressOwner' in balanceChange.owner &&
-                balanceChange.owner.AddressOwner === currentAddress &&
                 BigInt(balanceChange.amount) < 0n
         )
         .map((balanceChange) => {
             const amount = BigInt(balanceChange.amount);
+
+            // get address owner
             const owner =
                 (typeof balanceChange.owner === 'object' &&
                     'AddressOwner' in balanceChange.owner &&
                     balanceChange.owner.AddressOwner) ||
                 undefined;
 
+            // find equivalent positive balance change
             const recipient = balanceChanges.find(
                 (bc) =>
                     balanceChange.coinType === bc.coinType &&
                     BigInt(balanceChange.amount) === BigInt(bc.amount) * -1n
             );
 
+            // find recipient address
             const recipientAddress =
                 (recipient &&
                     typeof recipient.owner === 'object' &&
@@ -49,7 +53,7 @@ export const getBalanceChangeSummary = (
                 undefined;
 
             return {
-                type: balanceChange.coinType,
+                coinType: balanceChange.coinType,
                 amount: amount.toString(),
                 recipient: recipientAddress,
                 owner,
@@ -61,16 +65,19 @@ export const getBalanceChangeSummary = (
             (balanceChange) =>
                 typeof balanceChange.owner === 'object' &&
                 'AddressOwner' in balanceChange.owner &&
-                balanceChange.owner.AddressOwner === currentAddress &&
                 BigInt(balanceChange.amount) > 0n
         )
         .map((bc) => ({
-            type: bc.coinType,
+            type: 'positive',
+            coinType: bc.coinType,
             amount: bc.amount.toString(),
+            owner:
+                (typeof bc.owner === 'object' &&
+                    'AddressOwner' in bc.owner &&
+                    bc.owner.AddressOwner &&
+                    bc.owner.AddressOwner) ||
+                undefined,
         }));
 
-    return {
-        positive,
-        negative,
-    };
+    return [...positive, ...negative];
 };

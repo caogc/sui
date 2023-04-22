@@ -42,13 +42,13 @@ export function NFTDisplayCard({
     borderRadius = 'md',
 }: NFTsProps) {
     const { data: nftMeta, isLoading } = useGetNFTMeta(objectId);
-    const nftName = nftMeta?.name || formatAddress(objectId);
-    const nftImageUrl = nftMeta?.imageUrl || '';
-    const fileExtensionType = useFileExtensionType(nftImageUrl);
+    const nftName = nftMeta?.data || formatAddress(objectId);
+    // const nftImageUrl = nftMeta?.url || '';
+    // const fileExtensionType = useFileExtensionType(nftImageUrl);
     return (
         <div className={nftDisplayCardStyles({ animateHover, wideView })}>
             <Loading loading={isLoading}>
-                <NftImage
+                {/* <NftImage
                     name={nftName}
                     src={nftImageUrl}
                     title={nftMeta?.description || ''}
@@ -56,8 +56,8 @@ export function NFTDisplayCard({
                     showLabel={!wideView}
                     borderRadius={borderRadius}
                     size={size}
-                />
-                {wideView && (
+                /> */}
+                {/* {wideView && (
                     <div className="flex flex-col gap-1 flex-1 min-w-0 ml-1">
                         <Heading variant="heading6" color="gray-90" truncate>
                             {nftName}
@@ -84,7 +84,7 @@ export function NFTDisplayCard({
                     >
                         {nftName}
                     </div>
-                )}
+                )} */}
             </Loading>
         </div>
     );

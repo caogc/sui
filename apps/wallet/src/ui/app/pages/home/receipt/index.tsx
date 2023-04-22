@@ -16,7 +16,7 @@ import {
 import Alert from '_components/alert';
 import Loading from '_components/loading';
 import Overlay from '_components/overlay';
-import ReceiptCard from '_components/receipt-card';
+import { ReceiptCard2 } from '_components/receipt-card/ReceiptCard2';
 import { useActiveAddress } from '_src/ui/app/hooks/useActiveAddress';
 
 function ReceiptPage() {
@@ -36,6 +36,7 @@ function ReceiptPage() {
             return rpc.getTransactionBlock({
                 digest: transactionId!,
                 options: {
+                    showBalanceChanges: true,
                     showObjectChanges: true,
                     showInput: true,
                     showEffects: true,
@@ -97,7 +98,7 @@ function ReceiptPage() {
                 ) : null}
 
                 {data && (
-                    <ReceiptCard txn={data} activeAddress={activeAddress} />
+                    <ReceiptCard2 txn={data} activeAddress={activeAddress} />
                 )}
             </Overlay>
         </Loading>

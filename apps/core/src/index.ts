@@ -21,3 +21,5 @@ export * from './hooks/useGetSystemState';
 export * from './hooks/useGetTimeBeforeEpochNumber';
 export * from './hooks/useGetLatestCheckpointSequenceNumber';
 export * from './hooks/useGetTotalTransactionBlocks';
+export * from './hooks/useTransactionSummary';
+export * from './utils/transaction/helpers';

@@ -13,7 +13,7 @@ import {
     getTransactionDigest,
     getGasData,
 } from '@mysten/sui.js';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import { DateCard } from '../../shared/date-card';
 import { ReceiptCardBg } from './ReceiptCardBg';
@@ -28,7 +28,6 @@ import { TxnAmount } from '_components/receipt-card/TxnAmount';
 import { UnStakeTxnCard } from '_components/receipt-card/UnstakeTxnCard';
 // import { TxnImage } from '_components/transactions-card/TxnImage';
 import { useGetTxnRecipientAddress, useGetTransferAmount } from '_hooks';
-import { TxnGasSummary } from '_src/ui/app/components/receipt-card/TxnGasSummary';
 import { Text } from '_src/ui/app/shared/text';
 
 import type { SuiTransactionBlockResponse, SuiAddress } from '@mysten/sui.js';
@@ -37,21 +36,6 @@ type ReceiptCardProps = {
     txn: SuiTransactionBlockResponse;
     activeAddress: SuiAddress;
 };
-
-const TIME_TO_WAIT_FOR_EXPLORER = 60 * 1000;
-
-function useShouldShowExplorerLink(timestamp?: string) {
-    const [shouldShow, setShouldShow] = useState(false);
-    useEffect(() => {
-        if (!timestamp) return;
-        const diff = Date.now() - new Date(Number(timestamp)).getTime();
-        const showAfter = Math.max(0, TIME_TO_WAIT_FOR_EXPLORER - diff);
-        const timeout = setTimeout(() => setShouldShow(true), showAfter);
-        return () => clearTimeout(timeout);
-    }, [timestamp]);
-
-    return shouldShow;
-}
 
 function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
     const { events } = txn;
@@ -65,7 +49,6 @@ function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
         txn,
         address: activeAddress,
     });
-    const shouldShowExplorerLink = useShouldShowExplorerLink(timestamp);
 
     const transferAmount = useGetTransferAmount({
         txn,
@@ -101,12 +84,12 @@ function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
             <SponsoredTxnGasSummary sponsor={owner} totalGas={gasTotal} />
         );
     } else if (showGasSummary) {
-        txnGasSummary = (
-            <TxnGasSummary
-                totalGas={gasTotal}
-                transferAmount={totalSuiAmount}
-            />
-        );
+        // txnGasSummary = (
+        //     <TxnGasSummary
+        //         totalGas={gasTotal}
+        //         transferAmount={totalSuiAmount}
+        //     />
+        // );
     }
 
     let txnStatusText = '';
@@ -205,20 +188,18 @@ function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
                         {txnGasSummary}
                     </>
 
-                    {shouldShowExplorerLink && (
-                        <div className="flex gap-1.5 w-full py-3.5">
-                            <ExplorerLink
-                                type={ExplorerLinkType.transaction}
-                                transactionID={getTransactionDigest(txn)}
-                                title="View on Sui Explorer"
-                                className="text-sui-dark text-pSubtitleSmall font-semibold no-underline uppercase tracking-wider"
-                                showIcon={false}
-                            >
-                                View on Explorer
-                            </ExplorerLink>
-                            <ArrowUpRight12 className="text-steel text-pSubtitle" />
-                        </div>
-                    )}
+                    <div className="flex gap-1.5 w-full py-3.5">
+                        <ExplorerLink
+                            type={ExplorerLinkType.transaction}
+                            transactionID={getTransactionDigest(txn)}
+                            title="View on Sui Explorer"
+                            className="text-sui-dark text-pSubtitleSmall font-semibold no-underline uppercase tracking-wider"
+                            showIcon={false}
+                        >
+                            View on Explorer
+                        </ExplorerLink>
+                        <ArrowUpRight12 className="text-steel text-pSubtitle" />
+                    </div>
                 </div>
             </ReceiptCardBg>
         </div>

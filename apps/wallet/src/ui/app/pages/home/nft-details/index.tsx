@@ -138,7 +138,7 @@ function NFTDetailsPage() {
                                 />
                             </LabelValuesContainer>
                             <Collapse title="Details" initialIsOpen>
-                                <LabelValuesContainer>
+                                {/* <LabelValuesContainer>
                                     <LabelValueItem
                                         label="Name"
                                         value={nftDisplayData?.name}
@@ -163,7 +163,7 @@ function NFTDetailsPage() {
                                         value={nftDisplayData?.projectUrl}
                                         parseUrl
                                     />
-                                </LabelValuesContainer>
+                                </LabelValuesContainer> */}
                             </Collapse>
                             {metaKeys.length ? (
                                 <Collapse title="Attributes" initialIsOpen>

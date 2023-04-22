@@ -15,15 +15,15 @@ export function TotalAmount({
     if (!amount) return null;
     return (
         <Card>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
                 <Text color="steel-darker" variant="pBody">
                     Total Amount
                 </Text>
-                <div className="flex gap-2 items-center">
+                <div className="flex gap-0.5 items-center">
                     <Heading color="steel-darker" variant="heading2">
                         {formatted}
                     </Heading>
-                    <Text color="steel-darker" variant="body">
+                    <Text color="steel-darker" variant="body" weight="medium">
                         {symbol}
                     </Text>
                 </div>

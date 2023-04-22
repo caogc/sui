@@ -4,6 +4,7 @@ import { Heading } from '_src/ui/app/shared/heading';
 
 interface CardProps {
     heading?: string;
+    after?: ReactNode;
     children: ReactNode;
     footer?: ReactNode;
 }
@@ -16,14 +17,15 @@ export const SummaryCardFooter = ({ children }: { children: ReactNode }) => {
     );
 };
 
-export function Card({ heading, children, footer = null }: CardProps) {
+export function Card({ heading, children, after, footer = null }: CardProps) {
     return (
         <div className="bg-white relative flex flex-col p-4.5 shadow-summary-card rounded-2xl">
             {heading && (
-                <div className="flex items-center mb-4.5">
+                <div className="flex items-center justify-between mb-4.5">
                     <Heading variant="heading6" color="steel-darker">
                         {heading}
                     </Heading>
+                    {after && <div>{after}</div>}
                 </div>
             )}
             <div>{children}</div>

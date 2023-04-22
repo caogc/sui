@@ -1,3 +1,5 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
 import {
     getTotalGasUsed,
     type SuiTransactionBlockResponse,
@@ -13,9 +15,10 @@ export type AmountSummary = {
 
 export function getAmount(
     data: DryRunTransactionBlockResponse | SuiTransactionBlockResponse,
-    currentAddress: SuiAddress | null
+    currentAddress?: SuiAddress | null
 ) {
     const { effects, balanceChanges } = data;
+
     if (!effects || !balanceChanges) return null;
 
     const totalGas = getTotalGasUsed(effects) || 0n;
@@ -26,15 +29,19 @@ export function getAmount(
         balanceChange.owner.AddressOwner === currentAddress;
 
     const ownerAmount = balanceChanges.filter(isOwnerAmount);
-    const totalAmount =
-        ownerAmount.reduce(
-            (total, bc) => BigInt(total) + BigInt(bc.amount),
-            0n
-        ) * -1n;
+
+    const total = ownerAmount.reduce(
+        (total, bc) => BigInt(total) + BigInt(bc.amount),
+        0n
+    );
+
+    const totalAmount = (
+        total < 0n ? total * -1n - totalGas : total + totalGas
+    ).toString();
 
     const coinType = ownerAmount[0]?.coinType;
     return {
-        total: (totalAmount - totalGas).toString(),
+        total: totalAmount,
         totalGas: totalGas.toString(),
         coinType,
     };

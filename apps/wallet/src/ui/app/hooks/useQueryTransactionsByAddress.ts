@@ -31,6 +31,7 @@ export function useQueryTransactionsByAddress(address: SuiAddress | null) {
                         showInput: true,
                         showEffects: true,
                         showEvents: true,
+                        showBalanceChanges: true,
                     },
                 }),
                 rpc.queryTransactionBlocks({
@@ -41,6 +42,7 @@ export function useQueryTransactionsByAddress(address: SuiAddress | null) {
                         showInput: true,
                         showEffects: true,
                         showEvents: true,
+                        showBalanceChanges: true,
                     },
                 }),
             ]);
