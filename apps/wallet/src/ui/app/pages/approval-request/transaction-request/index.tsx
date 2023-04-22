@@ -11,7 +11,12 @@ import { useTransactionSummary } from '../summary/useTransactionSummary';
 import { GasFees } from './GasFees';
 import { TransactionDetails } from './TransactionDetails';
 import { UserApproveContainer } from '_components/user-approve-container';
-import { useAppDispatch, useSigner, useTransactionData } from '_hooks';
+import {
+    useAppDispatch,
+    useSigner,
+    useTransactionData,
+    useTransactionDryRun,
+} from '_hooks';
 import { type TransactionApprovalRequest } from '_payloads/transactions/ApprovalRequest';
 import { respondToTransactionRequest } from '_redux/slices/transaction-requests';
 import { PageMainLayoutTitle } from '_src/ui/app/shared/page-main-layout/PageMainLayoutTitle';
@@ -40,12 +45,11 @@ export function TransactionRequest({ txRequest }: TransactionRequestProps) {
     );
     const [isConfirmationVisible, setConfirmationVisible] = useState(false);
 
-    const summary = useTransactionSummary({
-        transactionBlock: transaction,
-        address: addressForTransaction,
-    });
+    const { data } = useTransactionDryRun(addressForTransaction, transaction);
 
-    console.log(transaction);
+    const summary = useTransactionSummary({
+        transaction: data,
+    });
 
     return (
         <>

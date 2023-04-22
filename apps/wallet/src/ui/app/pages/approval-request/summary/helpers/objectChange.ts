@@ -16,7 +16,7 @@ export type ObjectChangeSummary = {
 
 export const getObjectChangeSummary = (
     dryRun: DryRunTransactionBlockResponse | SuiTransactionBlockResponse,
-    currentAddress: SuiAddress
+    currentAddress: SuiAddress | null
 ): ObjectChangeSummary => {
     const { objectChanges } = dryRun;
     if (!objectChanges) return null;

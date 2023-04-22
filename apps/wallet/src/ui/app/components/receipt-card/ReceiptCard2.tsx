@@ -109,7 +109,7 @@ function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
         txnStatusText = 'Received';
     }
 
-    const summary = useTransactionSummary(txn);
+    // const summary = useTransactionSummary(txn);
 
     // const nftObjectLabel = transferAmount?.length ? txnStatusText : 'Call';
 
@@ -140,7 +140,7 @@ function ReceiptCard({ txn, activeAddress }: ReceiptCardProps) {
                     {/* {stakedTxn ? <StakeTxnCard event={stakedTxn} /> : null} */}
                     {/* {unstakeTxn ? <UnStakeTxnCard event={unstakeTxn} /> : null} */}
 
-                    <TransactionSummary summary={} />
+                    {/* <TransactionSummary summary={} /> */}
 
                     <>
                         {showSponsorInfo && (

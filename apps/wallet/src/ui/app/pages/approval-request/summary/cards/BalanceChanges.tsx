@@ -3,7 +3,7 @@ import { Coin, formatAddress } from '@mysten/sui.js';
 import { useState } from 'react';
 
 import { Card } from '../Card';
-import { type BalanceChangeSummary } from '../helpers/balanceChange';
+import { type BalanceChangeSummary } from '../helpers/getBalanceChangeSummary';
 import { useActiveAddress } from '_src/ui/app/hooks';
 import { Text } from '_src/ui/app/shared/text';
 
@@ -11,7 +11,7 @@ interface BalanceChangesProps {
     changes: {
         positive: BalanceChangeSummary[];
         negative: BalanceChangeSummary[];
-    };
+    } | null;
 }
 
 function BalanceChangeEntry({
@@ -24,6 +24,7 @@ function BalanceChangeEntry({
     const address = useActiveAddress();
     const [showAddress, setShowAddress] = useState(false);
 
+    if (!changes) return null;
     return (
         <div className="flex flex-col divide-y gap-2 divide-gray-40">
             {changes.map(({ amount, type, recipient, owner }) => {
@@ -86,6 +87,7 @@ function BalanceChangeEntry({
 }
 
 export function BalanceChanges({ changes }: BalanceChangesProps) {
+    if (!changes) return null;
     return (
         <Card heading="Balance Changes">
             <BalanceChangeEntry changes={changes.negative} />

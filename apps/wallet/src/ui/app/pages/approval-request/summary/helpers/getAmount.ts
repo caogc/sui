@@ -6,14 +6,14 @@ import {
 } from '@mysten/sui.js';
 
 export type AmountSummary = {
-    total: bigint;
+    total: string;
     coinType: string;
-    totalGas: bigint;
+    totalGas: string;
 } | null;
 
 export function getAmount(
     data: DryRunTransactionBlockResponse | SuiTransactionBlockResponse,
-    currentAddress: SuiAddress
+    currentAddress: SuiAddress | null
 ) {
     const { effects, balanceChanges } = data;
     if (!effects || !balanceChanges) return null;
@@ -31,6 +31,11 @@ export function getAmount(
             (total, bc) => BigInt(total) + BigInt(bc.amount),
             0n
         ) * -1n;
+
     const coinType = ownerAmount[0]?.coinType;
-    return { total: totalAmount, totalGas: totalGas, coinType };
+    return {
+        total: (totalAmount - totalGas).toString(),
+        totalGas: totalGas.toString(),
+        coinType,
+    };
 }

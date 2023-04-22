@@ -4,14 +4,13 @@ import {
     type GasCostSummary,
     getTotalGasUsed,
     type SuiTransactionBlockResponse,
-    is,
 } from '@mysten/sui.js';
 
+import { type AmountSummary, getAmount } from './getAmount';
 import {
     type BalanceChangeSummary,
     getBalanceChangeSummary,
-} from './balanceChange';
-import { type AmountSummary, getAmount } from './getAmount';
+} from './getBalanceChangeSummary';
 import {
     type ObjectChangeSummary,
     getObjectChangeSummary,
@@ -26,7 +25,7 @@ export type DryRunTransactionSummary = {
         total?: string;
     };
     objectSummary: ObjectChangeSummary;
-    amount: AmountSummary;
+    amount: AmountSummary | null;
 } | null;
 
 export const getTransactionSummary = (

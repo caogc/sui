@@ -75,6 +75,7 @@ function ObjectChangeEntry({
 }
 
 export function ObjectChanges({ summary }: { summary: ObjectChangeSummary }) {
+    if (!summary) return null;
     return (
         <>
             <Card heading="Changes">

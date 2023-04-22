@@ -8,10 +8,11 @@ export function TotalAmount({
     amount,
     coinType,
 }: {
-    amount: string;
-    coinType: string;
+    amount?: string;
+    coinType?: string;
 }) {
     const [formatted, symbol] = useFormatCoin(amount, coinType);
+    if (!amount) return null;
     return (
         <Card>
             <div className="flex justify-between">
