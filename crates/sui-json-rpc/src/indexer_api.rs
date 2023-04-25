@@ -14,7 +14,7 @@ use move_bytecode_utils::layout::TypeLayoutBuilder;
 use serde::Serialize;
 use sui_json::SuiJsonValue;
 use sui_types::MOVE_STDLIB_ADDRESS;
-use tracing::{info, instrument, warn};
+use tracing::{error, info, info_span, instrument, span::Span, warn, Instrument, Level};
 
 use move_core_types::language_storage::{StructTag, TypeTag};
 use mysten_metrics::spawn_monitored_task;
@@ -94,48 +94,56 @@ impl<R: ReadApiServer> IndexerApiServer for IndexerApi<R> {
         cursor: Option<ObjectID>,
         limit: Option<usize>,
     ) -> RpcResult<ObjectsPage> {
-        info!("indexer_get_owned_objects");
-        let limit = validate_limit(limit, QUERY_MAX_RESULT_LIMIT_OBJECTS)?;
-        self.metrics.get_owned_objects_limit.report(limit as u64);
-        let SuiObjectResponseQuery { filter, options } = query.unwrap_or_default();
-        let options = options.unwrap_or_default();
-        let mut objects = self
-            .state
-            .get_owner_objects(address, cursor, limit + 1, filter)
-            .map_err(|e| anyhow!("{e}"))?;
+        with_tracing(
+            self,
+            Span::current(),
+            "indexer_get_owned_objects",
+            |this, (address, query, cursor, limit)| async move {
+                let limit = validate_limit(limit, QUERY_MAX_RESULT_LIMIT_OBJECTS)?;
+                self.metrics.get_owned_objects_limit.report(limit as u64);
+                let SuiObjectResponseQuery { filter, options } = query.unwrap_or_default();
+                let options = options.unwrap_or_default();
+                let mut objects = self
+                    .state
+                    .get_owner_objects(address, cursor, limit + 1, filter)
+                    .map_err(|e| anyhow!("{e}"))?;
 
-        // objects here are of size (limit + 1), where the last one is the cursor for the next page
-        let has_next_page = objects.len() > limit;
-        objects.truncate(limit);
-        let next_cursor = objects
-            .last()
-            .cloned()
-            .map_or(cursor, |o_info| Some(o_info.object_id));
+                // objects here are of size (limit + 1), where the last one is the cursor for the next page
+                let has_next_page = objects.len() > limit;
+                objects.truncate(limit);
+                let next_cursor = objects
+                    .last()
+                    .cloned()
+                    .map_or(cursor, |o_info| Some(o_info.object_id));
 
-        let data = match options.is_not_in_object_info() {
-            true => {
-                let object_ids = objects.iter().map(|obj| obj.object_id).collect();
-                self.read_api
-                    .multi_get_objects(object_ids, Some(options))
-                    .await?
-            }
-            false => objects
-                .into_iter()
-                .map(|o_info| SuiObjectResponse::try_from((o_info, options.clone())))
-                .collect::<Result<Vec<SuiObjectResponse>, _>>()?,
-        };
+                let data = match options.is_not_in_object_info() {
+                    true => {
+                        let object_ids = objects.iter().map(|obj| obj.object_id).collect();
+                        self.read_api
+                            .multi_get_objects(object_ids, Some(options))
+                            .await?
+                    }
+                    false => objects
+                        .into_iter()
+                        .map(|o_info| SuiObjectResponse::try_from((o_info, options.clone())))
+                        .collect::<Result<Vec<SuiObjectResponse>, _>>()?,
+                };
 
-        self.metrics
-            .get_owned_objects_result_size
-            .report(data.len() as u64);
-        self.metrics
-            .get_owned_objects_result_size_total
-            .inc_by(data.len() as u64);
-        Ok(Page {
-            data,
-            next_cursor,
-            has_next_page,
-        })
+                self.metrics
+                    .get_owned_objects_result_size
+                    .report(data.len() as u64);
+                self.metrics
+                    .get_owned_objects_result_size_total
+                    .inc_by(data.len() as u64);
+                Ok(Page {
+                    data,
+                    next_cursor,
+                    has_next_page,
+                })
+            },
+            (address, query, cursor, limit),
+        )
+        .await
     }
 
     #[instrument(skip(self))]
@@ -260,25 +268,37 @@ impl<R: ReadApiServer> IndexerApiServer for IndexerApi<R> {
         parent_object_id: ObjectID,
         name: DynamicFieldName,
     ) -> RpcResult<SuiObjectResponse> {
-        info!("indexer_get_dynamic_field_object");
-        let DynamicFieldName {
-            type_: name_type,
-            value,
-        } = name.clone();
-        let layout = TypeLayoutBuilder::build_with_types(&name_type, &self.state.database)?;
-        let sui_json_value = SuiJsonValue::new(value)?;
-        let name_bcs_value = sui_json_value.to_bcs_bytes(&layout)?;
-        let id = self
-            .state
-            .get_dynamic_field_object_id(parent_object_id, name_type, &name_bcs_value)
-            .map_err(|e| anyhow!("{e}"))?
-            .ok_or_else(|| {
-                anyhow!("Cannot find dynamic field [{name:?}] for object [{parent_object_id}].")
-            })?;
-        // TODO(chris): add options to `get_dynamic_field_object` API as well
-        self.read_api
-            .get_object(id, Some(SuiObjectDataOptions::full_content()))
-            .await
+        // Use with_tracing, passing the arguments as a tuple
+        let result = with_tracing(
+            self,
+            Span::current(),
+            "get_dynamic_field_object",
+            |this, (parent_object_id, name)| async move {
+                let DynamicFieldName {
+                    type_: name_type,
+                    value,
+                } = name.clone();
+                let layout = TypeLayoutBuilder::build_with_types(&name_type, &this.state.database)?;
+                let sui_json_value = SuiJsonValue::new(value)?;
+                let name_bcs_value = sui_json_value.to_bcs_bytes(&layout)?;
+                let id = this
+                    .state
+                    .get_dynamic_field_object_id(parent_object_id, name_type, &name_bcs_value)
+                    .map_err(|e| anyhow!("{e}"))?
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Cannot find dynamic field [{name:?}] for object [{parent_object_id}]."
+                        )
+                    })?;
+                // TODO(chris): add options to `get_dynamic_field_object` API as well
+                this.read_api
+                    .get_object(id, Some(SuiObjectDataOptions::full_content()))
+                    .await
+            },
+            (parent_object_id, name),
+        );
+
+        result.await
     }
 
     #[instrument(skip(self))]
@@ -412,6 +432,27 @@ impl<R: ReadApiServer> SuiRpcModule for IndexerApi<R> {
     fn rpc_doc_module() -> Module {
         crate::api::IndexerApiOpenRpc::module_doc()
     }
+}
+
+async fn with_tracing<'a, S, F, Fut, A, T>(
+    this: &'a S,
+    span: Span,
+    method_name: &str,
+    f: F,
+    args: A,
+) -> RpcResult<T>
+where
+    F: Fn(&'a S, A) -> Fut,
+    Fut: std::future::Future<Output = RpcResult<T>>,
+{
+    let result = f(this, args).instrument(span).await;
+
+    match &result {
+        Ok(_) => info!(method_name),
+        Err(e) => error!("{} failed: {:?}", method_name, e),
+    }
+
+    result
 }
 
 impl<R: ReadApiServer> IndexerApi<R> {
