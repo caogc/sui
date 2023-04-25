@@ -263,6 +263,7 @@ impl SuiNode {
             Some(Arc::new(IndexStore::new(
                 config.db_path().join("indexes"),
                 &prometheus_registry,
+                epoch_store.protocol_config().max_type_nodes(),
             )))
         } else {
             None
