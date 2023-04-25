@@ -18,7 +18,7 @@ const cardStyles = cva(null, {
             none: '',
             sm: 'px-5 py-4',
             md: 'p-5',
-            lg: 'p-8',
+            lg: 'sm:p-8 p-4',
         },
     },
     defaultVariants: {
