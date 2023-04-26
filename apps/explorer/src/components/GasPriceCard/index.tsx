@@ -148,7 +148,7 @@ export function GasPriceCard() {
                         </Stats>
                     ) : null}
                 </div>
-                <div className="flex min-h-[30vh] flex-1 flex-col items-center justify-center rounded-xl bg-white pt-2">
+                <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center overflow-hidden rounded-xl bg-white pt-2">
                     {isDataLoading ? (
                         <>
                             <LoadingSpinner />
