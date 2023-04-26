@@ -27,6 +27,8 @@ use typed_store::traits::TableSummary;
 use typed_store::traits::TypedStoreDebug;
 use typed_store::Map;
 use typed_store_derive::DBMapUtils;
+use sui_types::sui_serde::BigInt;
+use std::convert::From;
 
 #[cfg(test)]
 #[path = "unit_tests/balance_changing_tx_tests.rs"]
@@ -176,17 +178,22 @@ impl CheckpointBlockProvider {
             .get_latest_checkpoint_sequence_number()
             .await?;
         if last_checkpoint < head {
-            for seq in last_checkpoint + 1..=head {
-                let checkpoint = self.client.read_api().get_checkpoint(seq.into()).await?;
-                let timestamp = UNIX_EPOCH + Duration::from_millis(checkpoint.timestamp_ms);
-                info!(
-                    "indexing checkpoint {seq} with {} txs, timestamp: {}",
-                    checkpoint.transactions.len(),
-                    DateTime::<Utc>::from(timestamp).format("%Y-%m-%d %H:%M:%S")
-                );
-                let resp = self.create_block_response(checkpoint).await?;
-                self.update_balance(resp.block).await?;
-                self.index_store.last_checkpoint.insert(&true, &seq)?;
+            for seq in (last_checkpoint + 1..head).step_by(100) {
+                // let checkpoint = self.client.read_api().get_checkpoint(seq.into()).await?;
+                let checkpoints = self.client.read_api().get_checkpoints(Some(BigInt::from(seq)), Some(100), false).await?;
+                // info!("length checkpoints {}", checkpoints.data.len());
+                for cp in checkpoints.data.iter() {
+                    let timestamp = UNIX_EPOCH + Duration::from_millis(cp.timestamp_ms);
+                    info!(
+                        "indexing checkpoint {} with {} txs, timestamp: {}",
+                        cp.sequence_number,
+                        cp.transactions.len(),
+                        DateTime::<Utc>::from(timestamp).format("%Y-%m-%d %H:%M:%S")
+                    );
+                    let resp = self.create_block_response(cp.clone()).await?;
+                    self.update_balance(resp.block).await?;
+                    self.index_store.last_checkpoint.insert(&true, &cp.sequence_number)?;
+                }
             }
         } else {
             debug!("No new checkpoints.")
@@ -231,6 +238,7 @@ impl CheckpointBlockProvider {
         let index = checkpoint.sequence_number;
         let hash = checkpoint.digest;
         let mut transactions = vec![];
+        info!("tranactions length {} in seq {}", checkpoint.transactions.len(), checkpoint.sequence_number);
         for batch in checkpoint.transactions.chunks(50) {
             let transaction_responses = self
                 .client
