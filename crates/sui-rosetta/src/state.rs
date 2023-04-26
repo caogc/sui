@@ -238,7 +238,6 @@ impl CheckpointBlockProvider {
         let index = checkpoint.sequence_number;
         let hash = checkpoint.digest;
         let mut transactions = vec![];
-        info!("tranactions length {} in seq {}", checkpoint.transactions.len(), checkpoint.sequence_number);
         for batch in checkpoint.transactions.chunks(50) {
             let transaction_responses = self
                 .client
