@@ -132,271 +132,266 @@ impl ReadApi {
         })
     }
 
-    async fn multi_get_transaction_blocks_internal(
-        &self,
-        digests: Vec<TransactionDigest>,
-        opts: Option<SuiTransactionBlockResponseOptions>,
-    ) -> Result<Vec<SuiTransactionBlockResponse>, Error> {
-        let num_digests = digests.len();
-        if num_digests > *QUERY_MAX_RESULT_LIMIT {
-            return Err(anyhow!(UserInputError::SizeLimitExceeded {
-                limit: "multi get transaction input limit".to_string(),
-                value: QUERY_MAX_RESULT_LIMIT.to_string()
-            })
-            .into());
-        }
-        self.metrics
-            .get_tx_blocks_limit
-            .report(digests.len() as u64);
+   async fn multi_get_transaction_blocks_internal(
+          &self,
+          digests: Vec<TransactionDigest>,
+          opts: Option<SuiTransactionBlockResponseOptions>,
+      ) -> Result<Vec<SuiTransactionBlockResponse>, Error> {
+          let num_digests = digests.len();
+          if num_digests > *QUERY_MAX_RESULT_LIMIT {
+              return Err(anyhow!(UserInputError::SizeLimitExceeded {
+                  limit: "multi get transaction input limit".to_string(),
+                  value: QUERY_MAX_RESULT_LIMIT.to_string()
+              })
+              .into());
+          }
+          self.metrics
+              .get_tx_blocks_limit
+              .report(digests.len() as u64);
 
-        let opts = opts.unwrap_or_default();
+          let opts = opts.unwrap_or_default();
 
-        // use LinkedHashMap to dedup and can iterate in insertion order.
-        let mut temp_response: LinkedHashMap<&TransactionDigest, IntermediateTransactionResponse> =
-            LinkedHashMap::from_iter(
-                digests
-                    .iter()
-                    .map(|k| (k, IntermediateTransactionResponse::new(*k))),
-            );
-        if temp_response.len() < num_digests {
-            return Err(anyhow!("The list of digests in the input contain duplicates").into());
-        }
+          // use LinkedHashMap to dedup and can iterate in insertion order.
+          let mut temp_response: LinkedHashMap<&TransactionDigest, IntermediateTransactionResponse> =
+              LinkedHashMap::from_iter(
+                  digests
+                      .iter()
+                      .map(|k| (k, IntermediateTransactionResponse::new(*k))),
+              );
+          if temp_response.len() < num_digests {
+              return Err(anyhow!("The list of digests in the input contain duplicates").into());
+          }
 
-        if opts.require_input() {
-            let state = self.state.clone();
-            let digest_clone = digests.clone();
-            let transactions = spawn_monitored_task!(async move {
-                state.multi_get_executed_transactions(&digest_clone).tap_err(
-                    |err| debug!(digests=?digest_clone, "Failed to multi get transaction: {:?}", err),
-                )
-            })
-                .await??;
+          if opts.require_input() {
+              let state = self.state.clone();
+              let digest_clone = digests.clone();
+              let transactions =
+                  state.multi_get_executed_transactions(&digest_clone).tap_err(
+                      |err| debug!(digests=?digest_clone, "Failed to multi get transaction: {:?}", err),
+                  )?;
 
-            for ((_digest, cache_entry), txn) in
-                temp_response.iter_mut().zip(transactions.into_iter())
-            {
-                cache_entry.transaction = txn;
-            }
-        }
+              for ((_digest, cache_entry), txn) in
+                  temp_response.iter_mut().zip(transactions.into_iter())
+              {
+                  cache_entry.transaction = txn;
+              }
+          }
 
-        // Fetch effects when `show_events` is true because events relies on effects
-        if opts.require_effects() {
-            let state = self.state.clone();
-            let digests_clone = digests.clone();
-            let effects_list = spawn_monitored_task!(async move {
-                state.multi_get_executed_effects(&digests_clone).tap_err(
-                    |err| debug!(digests=?digests_clone, "Failed to multi get effects: {:?}", err),
-                )
-            })
-            .await??;
-            for ((_digest, cache_entry), e) in
-                temp_response.iter_mut().zip(effects_list.into_iter())
-            {
-                cache_entry.effects = e;
-            }
-        }
+          // Fetch effects when `show_events` is true because events relies on effects
+          if opts.require_effects() {
+              let state = self.state.clone();
+              let digests_clone = digests.clone();
+              let effects_list = state.multi_get_executed_effects(&digests_clone).tap_err(
+                  |err| debug!(digests=?digests_clone, "Failed to multi get effects: {:?}", err),
+              )?;
+              for ((_digest, cache_entry), e) in
+                  temp_response.iter_mut().zip(effects_list.into_iter())
+              {
+                  cache_entry.effects = e;
+              }
+          }
 
-        let state = self.state.clone();
-        let digests_clone = digests.clone();
-        let checkpoint_seq_list = spawn_monitored_task!(async move {
-            state
-            .multi_get_transaction_checkpoint(&digests_clone)
-            .tap_err(
-                |err| debug!(digests=?digests_clone, "Failed to multi get checkpoint sequence number: {:?}", err))}).await??;
-        for ((_digest, cache_entry), seq) in temp_response
-            .iter_mut()
-            .zip(checkpoint_seq_list.into_iter())
-        {
-            cache_entry.checkpoint_seq = seq.map(|(_, seq)| seq);
-        }
+          let state = self.state.clone();
+          let digests_clone = digests.clone();
+          let checkpoint_seq_list =
+              state
+              .multi_get_transaction_checkpoint(&digests_clone)
+              .tap_err(
+                  |err| debug!(digests=?digests_clone, "Failed to multi get checkpoint sequence number: {:?}", err))?;
+          for ((_digest, cache_entry), seq) in temp_response
+              .iter_mut()
+              .zip(checkpoint_seq_list.into_iter())
+          {
+              cache_entry.checkpoint_seq = seq.map(|(_, seq)| seq);
+          }
 
-        let unique_checkpoint_numbers = temp_response
-            .values()
-            .filter_map(|cache_entry| cache_entry.checkpoint_seq.map(<u64>::from))
-            // It's likely that many transactions have the same checkpoint, so we don't
-            // need to over-fetch
-            .unique()
-            .collect::<Vec<CheckpointSequenceNumber>>();
+          let unique_checkpoint_numbers = temp_response
+              .values()
+              .filter_map(|cache_entry| cache_entry.checkpoint_seq.map(<u64>::from))
+              // It's likely that many transactions have the same checkpoint, so we don't
+              // need to over-fetch
+              .unique()
+              .collect::<Vec<CheckpointSequenceNumber>>();
 
-        // fetch timestamp from the DB
-        let timestamps = self
-            .state
-            .multi_get_checkpoint_by_sequence_number(&unique_checkpoint_numbers)
-            .map_err(|e| {
-                error!("Failed to fetch checkpoint summarys by these checkpoint ids: {unique_checkpoint_numbers:?} with error: {e:?}");
-                anyhow!("{e}")
-            })?
-            .into_iter()
-            .map(|c| c.map(|checkpoint| checkpoint.timestamp_ms));
+          // fetch timestamp from the DB
+          let timestamps = self
+              .state
+              .multi_get_checkpoint_by_sequence_number(&unique_checkpoint_numbers)
+              .map_err(|e| {
+                  error!("Failed to fetch checkpoint summarys by these checkpoint ids: {unique_checkpoint_numbers:?} with error: {e:?}");
+                  anyhow!("{e}")
+              })?
+              .into_iter()
+              .map(|c| c.map(|checkpoint| checkpoint.timestamp_ms));
 
-        // construct a hashmap of checkpoint -> timestamp for fast lookup
-        let checkpoint_to_timestamp = unique_checkpoint_numbers
-            .into_iter()
-            .zip(timestamps)
-            .collect::<HashMap<_, _>>();
+          // construct a hashmap of checkpoint -> timestamp for fast lookup
+          let checkpoint_to_timestamp = unique_checkpoint_numbers
+              .into_iter()
+              .zip(timestamps)
+              .collect::<HashMap<_, _>>();
 
-        // fill cache with the timestamp
-        for (_, cache_entry) in temp_response.iter_mut() {
-            if cache_entry.checkpoint_seq.is_some() {
-                // safe to unwrap because is_some is checked
-                cache_entry.timestamp = *checkpoint_to_timestamp
-                    .get(
-                        cache_entry
-                            .checkpoint_seq
-                            .map(<u64>::from)
-                            .as_ref()
-                            .unwrap(),
-                    )
-                    // Safe to unwrap because checkpoint_seq is guaranteed to exist in checkpoint_to_timestamp
-                    .unwrap();
-            }
-        }
+          // fill cache with the timestamp
+          for (_, cache_entry) in temp_response.iter_mut() {
+              if cache_entry.checkpoint_seq.is_some() {
+                  // safe to unwrap because is_some is checked
+                  cache_entry.timestamp = *checkpoint_to_timestamp
+                      .get(
+                          cache_entry
+                              .checkpoint_seq
+                              .map(<u64>::from)
+                              .as_ref()
+                              .unwrap(),
+                      )
+                      // Safe to unwrap because checkpoint_seq is guaranteed to exist in checkpoint_to_timestamp
+                      .unwrap();
+              }
+          }
 
-        if opts.show_events {
-            let event_digests_list = temp_response
-                .values()
-                .filter_map(|cache_entry| match &cache_entry.effects {
-                    Some(eff) => eff.events_digest().cloned(),
-                    None => None,
-                })
-                .collect::<Vec<TransactionEventsDigest>>();
+          if opts.show_events {
+              let event_digests_list = temp_response
+                  .values()
+                  .filter_map(|cache_entry| match &cache_entry.effects {
+                      Some(eff) => eff.events_digest().cloned(),
+                      None => None,
+                  })
+                  .collect::<Vec<TransactionEventsDigest>>();
 
-            // fetch events from the DB
-            let events = self
-                .state
-                .multi_get_events(&event_digests_list)
-                .map_err(|e| {
-                    error!("Failed to call multi_get_events for transactions {digests:?} with event digests {event_digests_list:?}");
-                    anyhow!("{e}")
-                })?
-                .into_iter();
+              // fetch events from the DB
+              let events = self
+                  .state
+                  .multi_get_events(&event_digests_list)
+                  .map_err(|e| {
+                      error!("Failed to call multi_get_events for transactions {digests:?} with event digests {event_digests_list:?}");
+                      anyhow!("{e}")
+                  })?
+                  .into_iter();
 
-            // construct a hashmap of event digests -> events for fast lookup
-            let event_digest_to_events = event_digests_list
-                .into_iter()
-                .zip(events)
-                .collect::<HashMap<_, _>>();
+              // construct a hashmap of event digests -> events for fast lookup
+              let event_digest_to_events = event_digests_list
+                  .into_iter()
+                  .zip(events)
+                  .collect::<HashMap<_, _>>();
 
-            // fill cache with the events
-            for (_, cache_entry) in temp_response.iter_mut() {
-                let transaction_digest = cache_entry.digest;
-                let event_digest: Option<Option<TransactionEventsDigest>> = cache_entry
-                    .effects
-                    .as_ref()
-                    .map(|e| e.events_digest().cloned());
-                let event_digest = event_digest.flatten();
-                if event_digest.is_some() {
-                    // safe to unwrap because `is_some` is checked
-                    let event_digest = event_digest.as_ref().unwrap();
-                    let events: Option<RpcResult<SuiTransactionBlockEvents>> = event_digest_to_events
-                        .get(event_digest)
-                        .cloned()
-                        .unwrap_or_else(|| panic!("Expect event digest {event_digest:?} to be found in cache for transaction {transaction_digest}"))
-                        .map(|events| to_sui_transaction_events(self, cache_entry.digest, events));
-                    match events {
-                        Some(Ok(e)) => cache_entry.events = Some(e),
-                        Some(Err(e)) => cache_entry.errors.push(e.to_string()),
-                        None => {
-                            error!("Failed to fetch events with event digest {event_digest:?} for txn {transaction_digest}");
-                            cache_entry.errors.push(format!(
-                                "Failed to fetch events with event digest {event_digest:?}",
-                            ))
-                        }
-                    }
-                } else {
-                    // events field will be Some if and only if `show_events` is true and
-                    // there is no error in converting fetching events
-                    cache_entry.events = Some(SuiTransactionBlockEvents::default());
-                }
-            }
-        }
+              // fill cache with the events
+              for (_, cache_entry) in temp_response.iter_mut() {
+                  let transaction_digest = cache_entry.digest;
+                  let event_digest: Option<Option<TransactionEventsDigest>> = cache_entry
+                      .effects
+                      .as_ref()
+                      .map(|e| e.events_digest().cloned());
+                  let event_digest = event_digest.flatten();
+                  if event_digest.is_some() {
+                      // safe to unwrap because `is_some` is checked
+                      let event_digest = event_digest.as_ref().unwrap();
+                      let events: Option<RpcResult<SuiTransactionBlockEvents>> = event_digest_to_events
+                          .get(event_digest)
+                          .cloned()
+                          .unwrap_or_else(|| panic!("Expect event digest {event_digest:?} to be found in cache for transaction {transaction_digest}"))
+                          .map(|events| to_sui_transaction_events(self, cache_entry.digest, events));
+                      match events {
+                          Some(Ok(e)) => cache_entry.events = Some(e),
+                          Some(Err(e)) => cache_entry.errors.push(e.to_string()),
+                          None => {
+                              error!("Failed to fetch events with event digest {event_digest:?} for txn {transaction_digest}");
+                              cache_entry.errors.push(format!(
+                                  "Failed to fetch events with event digest {event_digest:?}",
+                              ))
+                          }
+                      }
+                  } else {
+                      // events field will be Some if and only if `show_events` is true and
+                      // there is no error in converting fetching events
+                      cache_entry.events = Some(SuiTransactionBlockEvents::default());
+                  }
+              }
+          }
 
-        let object_cache = ObjectProviderCache::new(self.state.clone());
-        if opts.show_balance_changes {
-            let mut results = vec![];
-            for resp in temp_response.values() {
-                let input_objects = if let Some(tx) = resp.transaction() {
-                    tx.data()
-                        .inner()
-                        .intent_message
-                        .value
-                        .input_objects()
-                        .unwrap_or_default()
-                } else {
-                    // don't have the input tx, so not much we can do. perhaps this is an Err?
-                    Vec::new()
-                };
-                results.push(get_balance_changes_from_effect(
-                    &object_cache,
-                    resp.effects.as_ref().ok_or_else(|| {
-                        anyhow!("unable to derive balance changes because effect is empty")
-                    })?,
-                    input_objects,
-                    None,
-                ));
-            }
-            let results = join_all(results).await;
-            for (result, entry) in results.into_iter().zip(temp_response.iter_mut()) {
-                match result {
-                    Ok(balance_changes) => entry.1.balance_changes = Some(balance_changes),
-                    Err(e) => entry
-                        .1
-                        .errors
-                        .push(format!("Failed to fetch balance changes {e:?}")),
-                }
-            }
-        }
+          let object_cache = ObjectProviderCache::new(self.state.clone());
+          if opts.show_balance_changes {
+              let mut results = vec![];
+              for resp in temp_response.values() {
+                  let input_objects = if let Some(tx) = resp.transaction() {
+                      tx.data()
+                          .inner()
+                          .intent_message
+                          .value
+                          .input_objects()
+                          .unwrap_or_default()
+                  } else {
+                      // don't have the input tx, so not much we can do. perhaps this is an Err?
+                      Vec::new()
+                  };
+                  results.push(get_balance_changes_from_effect(
+                      &object_cache,
+                      resp.effects.as_ref().ok_or_else(|| {
+                          anyhow!("unable to derive balance changes because effect is empty")
+                      })?,
+                      input_objects,
+                      None,
+                  ));
+              }
+              let results = join_all(results).await;
+              for (result, entry) in results.into_iter().zip(temp_response.iter_mut()) {
+                  match result {
+                      Ok(balance_changes) => entry.1.balance_changes = Some(balance_changes),
+                      Err(e) => entry
+                          .1
+                          .errors
+                          .push(format!("Failed to fetch balance changes {e:?}")),
+                  }
+              }
+          }
 
-        if opts.show_object_changes {
-            let mut results = vec![];
-            for resp in temp_response.values() {
-                let effects = resp.effects.as_ref().ok_or_else(|| {
-                    anyhow!("unable to derive object changes because effect is empty")
-                })?;
+          if opts.show_object_changes {
+              let mut results = vec![];
+              for resp in temp_response.values() {
+                  let effects = resp.effects.as_ref().ok_or_else(|| {
+                      anyhow!("unable to derive object changes because effect is empty")
+                  })?;
 
-                results.push(get_object_changes(
-                    &object_cache,
-                    resp.transaction
-                        .as_ref()
-                        .ok_or_else(|| {
-                            anyhow!("unable to derive object changes because effect is empty")
-                        })?
-                        .data()
-                        .intent_message()
-                        .value
-                        .sender(),
-                    effects.modified_at_versions(),
-                    effects.all_changed_objects(),
-                    effects.all_deleted(),
-                ));
-            }
-            let results = join_all(results).await;
-            for (result, entry) in results.into_iter().zip(temp_response.iter_mut()) {
-                match result {
-                    Ok(object_changes) => entry.1.object_changes = Some(object_changes),
-                    Err(e) => entry
-                        .1
-                        .errors
-                        .push(format!("Failed to fetch object changes {e:?}")),
-                }
-            }
-        }
+                  results.push(get_object_changes(
+                      &object_cache,
+                      resp.transaction
+                          .as_ref()
+                          .ok_or_else(|| {
+                              anyhow!("unable to derive object changes because effect is empty")
+                          })?
+                          .data()
+                          .intent_message()
+                          .value
+                          .sender(),
+                      effects.modified_at_versions(),
+                      effects.all_changed_objects(),
+                      effects.all_deleted(),
+                  ));
+              }
+              let results = join_all(results).await;
+              for (result, entry) in results.into_iter().zip(temp_response.iter_mut()) {
+                  match result {
+                      Ok(object_changes) => entry.1.object_changes = Some(object_changes),
+                      Err(e) => entry
+                          .1
+                          .errors
+                          .push(format!("Failed to fetch object changes {e:?}")),
+                  }
+              }
+          }
 
-        let epoch_store = self.state.load_epoch_store_one_call_per_task();
-        let converted_tx_block_resps = temp_response
-            .into_iter()
-            .map(|c| convert_to_response(c.1, &opts, epoch_store.module_cache()))
-            .collect::<Result<Vec<_>, _>>()?;
+          let epoch_store = self.state.load_epoch_store_one_call_per_task();
+          let converted_tx_block_resps = temp_response
+              .into_iter()
+              .map(|c| convert_to_response(c.1, &opts, epoch_store.module_cache()))
+              .collect::<Result<Vec<_>, _>>()?;
 
-        self.metrics
-            .get_tx_blocks_result_size
-            .report(converted_tx_block_resps.len() as u64);
-        self.metrics
-            .get_tx_blocks_result_size_total
-            .inc_by(converted_tx_block_resps.len() as u64);
-        Ok(converted_tx_block_resps)
-    }
-}
+          self.metrics
+              .get_tx_blocks_result_size
+              .report(converted_tx_block_resps.len() as u64);
+          self.metrics
+              .get_tx_blocks_result_size_total
+              .inc_by(converted_tx_block_resps.len() as u64);
+          Ok(converted_tx_block_resps)
+      }
+  }
 
 #[async_trait]
 impl ReadApiServer for ReadApi {

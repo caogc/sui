@@ -178,9 +178,9 @@ impl CheckpointBlockProvider {
             .get_latest_checkpoint_sequence_number()
             .await?;
         if last_checkpoint < head {
-            for seq in (last_checkpoint + 1..head).step_by(100) {
+            for seq in (last_checkpoint + 1..head).step_by(1000) {
                 // let checkpoint = self.client.read_api().get_checkpoint(seq.into()).await?;
-                let checkpoints = self.client.read_api().get_checkpoints(Some(BigInt::from(seq)), Some(100), false).await?;
+                let checkpoints = self.client.read_api().get_checkpoints(Some(BigInt::from(seq)), Some(1000), false).await?;
                 // info!("length checkpoints {}", checkpoints.data.len());
                 for cp in checkpoints.data.iter() {
                     let timestamp = UNIX_EPOCH + Duration::from_millis(cp.timestamp_ms);
@@ -238,7 +238,7 @@ impl CheckpointBlockProvider {
         let index = checkpoint.sequence_number;
         let hash = checkpoint.digest;
         let mut transactions = vec![];
-        for batch in checkpoint.transactions.chunks(50) {
+        for batch in checkpoint.transactions.chunks(500) {
             let transaction_responses = self
                 .client
                 .read_api()
