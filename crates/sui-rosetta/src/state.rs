@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use mysten_metrics::spawn_monitored_task;
 use rocksdb::Options;
 use std::collections::HashMap;
+use std::convert::From;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -21,14 +22,13 @@ use sui_sdk::rpc_types::Checkpoint;
 use sui_sdk::SuiClient;
 use sui_types::base_types::{EpochId, SuiAddress};
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+use sui_types::sui_serde::BigInt;
 use tracing::{debug, error, info, warn};
 use typed_store::rocks::{default_db_options, DBMap, DBOptions, MetricConf};
 use typed_store::traits::TableSummary;
 use typed_store::traits::TypedStoreDebug;
 use typed_store::Map;
 use typed_store_derive::DBMapUtils;
-use sui_types::sui_serde::BigInt;
-use std::convert::From;
 
 #[cfg(test)]
 #[path = "unit_tests/balance_changing_tx_tests.rs"]
@@ -178,9 +178,13 @@ impl CheckpointBlockProvider {
             .get_latest_checkpoint_sequence_number()
             .await?;
         if last_checkpoint < head {
-            for seq in (last_checkpoint + 1..head).step_by(1000) {
+            for seq in (last_checkpoint + 1..head).step_by(100) {
                 // let checkpoint = self.client.read_api().get_checkpoint(seq.into()).await?;
-                let checkpoints = self.client.read_api().get_checkpoints(Some(BigInt::from(seq)), Some(1000), false).await?;
+                let checkpoints = self
+                    .client
+                    .read_api()
+                    .get_checkpoints(Some(BigInt::from(seq)), Some(100), false)
+                    .await?;
                 // info!("length checkpoints {}", checkpoints.data.len());
                 for cp in checkpoints.data.iter() {
                     let timestamp = UNIX_EPOCH + Duration::from_millis(cp.timestamp_ms);
@@ -190,9 +194,30 @@ impl CheckpointBlockProvider {
                         cp.transactions.len(),
                         DateTime::<Utc>::from(timestamp).format("%Y-%m-%d %H:%M:%S")
                     );
+
+                    let current_time = Utc::now();
                     let resp = self.create_block_response(cp.clone()).await?;
+                    let another_time = Utc::now();
+                    let time_difference = another_time - current_time;
+                    info!(
+                        "Method create_block_response at checkpoint {}: {} ms",
+                        cp.sequence_number,
+                        time_difference.num_milliseconds()
+                    );
+
+                    let current_time_bal = Utc::now();
                     self.update_balance(resp.block).await?;
-                    self.index_store.last_checkpoint.insert(&true, &cp.sequence_number)?;
+                    let another_time_bal = Utc::now();
+                    let time_difference_bal = another_time_bal - current_time_bal;
+                    info!(
+                        "Method update_balance at checkpoint {}: {} ms",
+                        cp.sequence_number,
+                        time_difference_bal.num_milliseconds()
+                    );
+
+                    self.index_store
+                        .last_checkpoint
+                        .insert(&true, &cp.sequence_number)?;
                 }
             }
         } else {
@@ -358,5 +383,5 @@ impl CheckpointIndexStore {
 }
 
 fn default_config() -> DBOptions {
-    default_db_options().optimize_for_point_lookup(64)
+    default_db_options().optimize_for_point_lookup(64).optimize_for_write_throughput()
 }
