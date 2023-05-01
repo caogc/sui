@@ -6,8 +6,7 @@ import cl from 'classnames';
 import { memo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import Icon, { SuiIcons } from '_components/icon';
-import { GAS_TYPE_ARG } from '_redux/slices/sui-objects/Coin';
+import { CoinIcon } from '_components/coin-icon';
 
 import st from './CoinBalance.module.scss';
 
@@ -20,15 +19,13 @@ export type CoinProps = {
 
 function CoinBalance({ type, balance, mode = 'row-item' }: CoinProps) {
     const [formatted, symbol] = useFormatCoin(balance, type);
-    const icon = type === GAS_TYPE_ARG ? SuiIcons.SuiLogoIcon : SuiIcons.Tokens;
-
     const navigate = useNavigate();
 
     // TODO: use a different logic to differentiate between view types
     const coinDetail = useCallback(() => {
         if (mode !== 'row-item') return;
 
-        navigate(`/tokens/details?type=${encodeURIComponent(type)}`);
+        navigate(`/send?type=${encodeURIComponent(type)}`);
     }, [mode, navigate, type]);
 
     return (
@@ -43,12 +40,7 @@ function CoinBalance({ type, balance, mode = 'row-item' }: CoinProps) {
         >
             {mode === 'row-item' ? (
                 <>
-                    <Icon
-                        icon={icon}
-                        className={cl(st.coinIcon, {
-                            [st.sui]: type === GAS_TYPE_ARG,
-                        })}
-                    />
+                    <CoinIcon coinType={type} />
                     <div className={cl(st.coinNameContainer, st[mode])}>
                         <span className={st.coinName}>
                             {symbol.toLocaleLowerCase()}

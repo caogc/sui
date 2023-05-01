@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useFeatureIsOn } from '@growthbook/growthbook-react';
-import { Info12 } from '@mysten/icons';
+import {
+    Info12,
+    WalletActionBuy24,
+    WalletActionSend24,
+    Swap16,
+} from '@mysten/icons';
 import { SUI_TYPE_ARG, Coin } from '@mysten/sui.js';
 import { useMemo } from 'react';
 
@@ -14,7 +19,6 @@ import { useActiveAddress } from '_app/hooks/useActiveAddress';
 import { Text } from '_app/shared/text';
 import Alert from '_components/alert';
 import Loading from '_components/loading';
-import { SuiIcons } from '_font-icons/output/sui-icons';
 import { useGetAllBalances, useGetCoinBalance } from '_hooks';
 import { AccountSelector } from '_src/ui/app/components/AccountSelector';
 import PageTitle from '_src/ui/app/shared/PageTitle';
@@ -44,9 +48,9 @@ function MyTokens() {
             {balance?.length ? (
                 <div className="flex flex-1 justify-start flex-col w-full mt-6">
                     <Text variant="caption" color="steel" weight="semibold">
-                        MY COINS
+                        My Coins
                     </Text>
-                    <div className="flex flex-col w-full justify-center divide-y divide-solid divide-steel/20 divide-x-0 px-1.5">
+                    <div className="flex flex-col w-full justify-center divide-y divide-solid divide-steel/20 divide-x-0 px-1 mb-20">
                         {balance.map(({ coinType, totalBalance }) => (
                             <CoinBalance
                                 type={coinType}
@@ -128,13 +132,21 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
                     ) : null}
                     <div className="flex flex-nowrap gap-3 justify-center w-full mt-5">
                         <IconLink
-                            icon={SuiIcons.Buy}
+                            icon={
+                                <WalletActionBuy24 className="shrink-0 h-6 w-6" />
+                            }
                             to="/"
                             disabled={true}
-                            text="Buy"
+                            text="Buy & Sell"
                         />
+
                         <IconLink
-                            icon={SuiIcons.ArrowLeft}
+                            icon={
+                                <WalletActionSend24
+                                    fill="fillCurrent"
+                                    className="shrink-0 h-6 w-6 font-bold"
+                                />
+                            }
                             to={`/send${
                                 coinBalance?.coinType
                                     ? `?${new URLSearchParams({
@@ -146,7 +158,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
                             text="Send"
                         />
                         <IconLink
-                            icon={SuiIcons.Swap}
+                            icon={<Swap16 className="shrink-0 h-6 w-6" />}
                             to="/"
                             disabled={true}
                             text="Swap"

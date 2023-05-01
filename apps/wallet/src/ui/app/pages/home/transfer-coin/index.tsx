@@ -18,6 +18,7 @@ import BottomMenuLayout, {
     Content,
     Menu,
 } from '_app/shared/bottom-menu-layout';
+import { Text } from '_app/shared/text';
 import { ActiveCoinsCard } from '_components/active-coins-card';
 import Overlay from '_components/overlay';
 import { trackEvent } from '_src/shared/plausible';
@@ -116,7 +117,7 @@ function TransferCoinPage() {
                                 amount={formData.amount}
                                 to={formData.to}
                                 approximation={formData.isPayAllSui}
-                                transaction={transaction}
+                                gasBudget={formData.gasBudgetEst}
                             />
                         </Content>
                         <Menu
@@ -135,7 +136,6 @@ function TransferCoinPage() {
                                 type="button"
                                 variant="primary"
                                 onClick={() => executeTransfer.mutateAsync()}
-                                size="tall"
                                 text="Send Now"
                                 disabled={coinType === null}
                                 after={<ArrowRight16 />}
@@ -145,7 +145,16 @@ function TransferCoinPage() {
                     </BottomMenuLayout>
                 ) : (
                     <>
-                        <div className="mb-7">
+                        <div className="mb-7 flex flex-col gap-2.5">
+                            <div className="pl-1.5">
+                                <Text
+                                    variant="caption"
+                                    color="steel"
+                                    weight="semibold"
+                                >
+                                    Select all Coins
+                                </Text>
+                            </div>
                             <ActiveCoinsCard activeCoinType={coinType} />
                         </div>
 

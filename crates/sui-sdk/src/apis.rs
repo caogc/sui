@@ -18,7 +18,6 @@ use sui_json_rpc::api::GovernanceReadApiClient;
 use sui_json_rpc::api::{
     CoinReadApiClient, IndexerApiClient, MoveUtilsClient, ReadApiClient, WriteApiClient,
 };
-use sui_json_rpc_types::{SuiLoadedChildObjectsResponse, CheckpointPage};
 use sui_json_rpc_types::{
     Balance, Checkpoint, CheckpointId, Coin, CoinPage, DelegatedStake,
     DryRunTransactionBlockResponse, DynamicFieldPage, EventFilter, EventPage, ObjectsPage,
@@ -27,9 +26,9 @@ use sui_json_rpc_types::{
     SuiTransactionBlockEffectsAPI, SuiTransactionBlockResponse, SuiTransactionBlockResponseOptions,
     SuiTransactionBlockResponseQuery, TransactionBlocksPage,
 };
+use sui_json_rpc_types::{CheckpointPage, SuiLoadedChildObjectsResponse};
 use sui_types::balance::Supply;
 use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress, TransactionDigest};
-use sui_types::committee::EpochId;
 use sui_types::error::TRANSACTION_NOT_FOUND_MSG_PREFIX;
 use sui_types::event::EventID;
 use sui_types::messages::{ExecuteTransactionRequestType, TransactionData, VerifiedTransaction};
@@ -172,15 +171,19 @@ impl ReadApi {
     pub async fn get_checkpoint(&self, id: CheckpointId) -> SuiRpcResult<Checkpoint> {
         Ok(self.api.http.get_checkpoint(id).await?)
     }
-    
+
+    /// Return paginated list of checkpoints
     pub async fn get_checkpoints(
         &self,
-        // If `Some`, the query will start from the next item after the specified cursor
         cursor: Option<BigInt<u64>>,
         limit: Option<usize>,
         descending_order: bool,
     ) -> SuiRpcResult<CheckpointPage> {
-        Ok(self.api.http.get_checkpoints(cursor, limit, descending_order).await?)
+        Ok(self
+            .api
+            .http
+            .get_checkpoints(cursor, limit, descending_order)
+            .await?)
     }
 
     /// Return the sequence number of the latest checkpoint that has been executed
@@ -300,19 +303,28 @@ impl CoinReadApi {
         coin_type: Option<String>,
     ) -> impl Stream<Item = Coin> + '_ {
         stream::unfold(
-            (vec![], None, true, coin_type),
-            move |(mut data, cursor, first, coin_type)| async move {
+            (
+                vec![],
+                /* cursor */ None,
+                /* has_next_page */ true,
+                coin_type,
+            ),
+            move |(mut data, cursor, has_next_page, coin_type)| async move {
                 if let Some(item) = data.pop() {
-                    Some((item, (data, cursor, false, coin_type)))
-                } else if (cursor.is_none() && first) || cursor.is_some() {
+                    Some((item, (data, cursor, /* has_next_page */ true, coin_type)))
+                } else if has_next_page {
                     let page = self
                         .get_coins(owner, coin_type.clone(), cursor, Some(100))
                         .await
                         .ok()?;
                     let mut data = page.data;
                     data.reverse();
-                    data.pop()
-                        .map(|item| (item, (data, page.next_cursor, false, coin_type)))
+                    data.pop().map(|item| {
+                        (
+                            item,
+                            (data, page.next_cursor, page.has_next_page, coin_type),
+                        )
+                    })
                 } else {
                     None
                 }
@@ -325,18 +337,12 @@ impl CoinReadApi {
         address: SuiAddress,
         coin_type: Option<String>,
         amount: u128,
-        locked_until_epoch: Option<EpochId>,
         exclude: Vec<ObjectID>,
     ) -> SuiRpcResult<Vec<Coin>> {
         let mut total = 0u128;
         let coins = self
             .get_coins_stream(address, coin_type)
-            .filter(|coin: &Coin| {
-                future::ready(
-                    locked_until_epoch == coin.locked_until_epoch
-                        && !exclude.contains(&coin.coin_object_id),
-                )
-            })
+            .filter(|coin: &Coin| future::ready(!exclude.contains(&coin.coin_object_id)))
             .take_while(|coin: &Coin| {
                 let ready = future::ready(total < amount);
                 total += coin.balance as u128;
@@ -447,11 +453,11 @@ impl EventApi {
 }
 
 #[derive(Clone)]
-pub struct QuorumDriver {
+pub struct QuorumDriverApi {
     api: Arc<RpcClient>,
 }
 
-impl QuorumDriver {
+impl QuorumDriverApi {
     pub(crate) fn new(api: Arc<RpcClient>) -> Self {
         Self { api }
     }

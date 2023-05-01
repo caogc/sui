@@ -31,13 +31,11 @@ use sui_protocol_config::ProtocolVersion;
 use sui_types::base_types::{EpochId, TransactionDigest};
 use sui_types::crypto::{AuthoritySignInfo, AuthorityStrongQuorumSignInfo};
 use sui_types::digests::{CheckpointContentsDigest, CheckpointDigest};
+use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
 use sui_types::error::{SuiError, SuiResult};
 use sui_types::gas::GasCostSummary;
 use sui_types::message_envelope::Message;
-use sui_types::messages::{
-    ConsensusTransactionKey, TransactionDataAPI, TransactionEffects, TransactionEffectsAPI,
-    TransactionKind,
-};
+use sui_types::messages::{ConsensusTransactionKey, TransactionDataAPI, TransactionKind};
 use sui_types::messages_checkpoint::SignedCheckpointSummary;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointContents, CheckpointSequenceNumber,
@@ -384,10 +382,18 @@ impl CheckpointStore {
         self.checkpoint_sequence_by_contents_digest
             .insert(&checkpoint.content_digest, checkpoint.sequence_number())?;
         let full_contents = full_contents.into_inner();
-        self.full_checkpoint_content
-            .insert(checkpoint.sequence_number(), &full_contents)?;
+
+        let mut batch = self.full_checkpoint_content.batch();
+        batch.insert_batch(
+            &self.full_checkpoint_content,
+            [(checkpoint.sequence_number(), &full_contents)],
+        )?;
+
         let contents = full_contents.into_checkpoint_contents();
-        self.insert_checkpoint_contents(contents)
+
+        batch.insert_batch(&self.checkpoint_content, [(contents.digest(), &contents)])?;
+
+        batch.write()
     }
 
     pub fn delete_full_checkpoint_contents(
@@ -1378,6 +1384,7 @@ mod tests {
     use std::ops::Deref;
     use sui_types::base_types::{ObjectID, SequenceNumber, TransactionEffectsDigest};
     use sui_types::crypto::Signature;
+    use sui_types::effects::TransactionEffects;
     use sui_types::messages::{GenesisObject, VerifiedTransaction};
     use sui_types::messages_checkpoint::SignedCheckpointSummary;
     use sui_types::move_package::MovePackage;

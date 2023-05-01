@@ -103,10 +103,10 @@ const TRANSACTION_BRAND = Symbol.for('@mysten/transaction');
 const MAX_GAS_OBJECTS = 256;
 
 // The maximum gas that is allowed.
-const MAX_GAS = 1000000000;
+const MAX_GAS = 50_000_000_000;
 
-// A guess about how much overhead each coin provides for gas calculations.
-const GAS_OVERHEAD_PER_COIN = 10n;
+// An amount of gas (in gas units) that is added to transactions as an overhead to ensure transactions do not fail.
+const GAS_SAFE_OVERHEAD = 1000n;
 
 interface BuildOptions {
   provider?: JsonRpcProvider;
@@ -378,7 +378,12 @@ export class TransactionBlock {
   }
 
   // The current default is just picking _all_ coins we can which may not be ideal.
-  async #selectGasPayment(provider?: JsonRpcProvider) {
+  async #prepareGasPayment({ provider, onlyTransactionKind }: BuildOptions) {
+    // Early return if the payment is already set:
+    if (onlyTransactionKind || this.#blockData.gasConfig.payment) {
+      return;
+    }
+
     const gasOwner = this.#blockData.gasConfig.owner ?? this.#blockData.sender;
 
     const coins = await expectProvider(provider).getCoins({
@@ -414,18 +419,18 @@ export class TransactionBlock {
       throw new Error('No valid gas coins found for the transaction.');
     }
 
-    return paymentCoins;
+    this.setGasPayment(paymentCoins);
   }
 
-  /**
-   * Prepare the transaction by valdiating the transaction data and resolving all inputs
-   * so that it can be built into bytes.
-   */
-  async #prepare({ provider, onlyTransactionKind }: BuildOptions) {
-    if (!onlyTransactionKind && !this.#blockData.sender) {
-      throw new Error('Missing transaction sender');
+  async #prepareGasPrice({ provider, onlyTransactionKind }: BuildOptions) {
+    if (onlyTransactionKind || this.#blockData.gasConfig.price) {
+      return;
     }
 
+    this.setGasPrice(await expectProvider(provider).getReferenceGasPrice());
+  }
+
+  async #prepareTransactions(provider?: JsonRpcProvider) {
     const { inputs, transactions } = this.#blockData;
 
     const moveModulesToResolve: MoveCallTransaction[] = [];
@@ -632,18 +637,26 @@ export class TransactionBlock {
         }
       });
     }
+  }
+
+  /**
+   * Prepare the transaction by valdiating the transaction data and resolving all inputs
+   * so that it can be built into bytes.
+   */
+  async #prepare({ provider, onlyTransactionKind }: BuildOptions) {
+    if (!onlyTransactionKind && !this.#blockData.sender) {
+      throw new Error('Missing transaction sender');
+    }
+
+    await Promise.all([
+      this.#prepareGasPrice({ provider, onlyTransactionKind }),
+      this.#prepareTransactions(provider),
+    ]);
 
     if (!onlyTransactionKind) {
-      if (!this.#blockData.gasConfig.price) {
-        this.setGasPrice(await expectProvider(provider).getReferenceGasPrice());
-      }
+      await this.#prepareGasPayment({ provider, onlyTransactionKind });
 
-      if (!this.#blockData.gasConfig.payment) {
-        this.#blockData.gasConfig.payment = await this.#selectGasPayment(
-          provider,
-        );
-      }
-      if (!this.blockData.gasConfig.budget) {
+      if (!this.#blockData.gasConfig.budget) {
         const dryRunResult = await expectProvider(
           provider,
         ).dryRunTransactionBlock({
@@ -663,15 +676,22 @@ export class TransactionBlock {
           );
         }
 
-        const coinOverhead =
-          GAS_OVERHEAD_PER_COIN *
-          BigInt(this.blockData.gasConfig.payment?.length || 0n) *
-          BigInt(this.blockData.gasConfig.price || 1n);
+        const safeOverhead =
+          GAS_SAFE_OVERHEAD * BigInt(this.blockData.gasConfig.price || 1n);
 
+        const baseComputationCostWithOverhead =
+          BigInt(dryRunResult.effects.gasUsed.computationCost) + safeOverhead;
+
+        const gasBudget =
+          baseComputationCostWithOverhead +
+          BigInt(dryRunResult.effects.gasUsed.storageCost) -
+          BigInt(dryRunResult.effects.gasUsed.storageRebate);
+
+        // Set the budget to max(computation, computation + storage - rebate)
         this.setGasBudget(
-          BigInt(dryRunResult.effects.gasUsed.computationCost) +
-            BigInt(dryRunResult.effects.gasUsed.storageCost) +
-            coinOverhead,
+          gasBudget > baseComputationCostWithOverhead
+            ? gasBudget
+            : baseComputationCostWithOverhead,
         );
       }
     }

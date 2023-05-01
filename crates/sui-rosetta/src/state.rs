@@ -263,10 +263,6 @@ impl CheckpointBlockProvider {
         let index = checkpoint.sequence_number;
         let hash = checkpoint.digest;
         let mut transactions = vec![];
-        // Verify the input
-        println!("Number of transactions: {}", checkpoint.transactions.len());
-        // Track loop iterations
-        let mut iteration_count = 0;
 
          for digest in checkpoint.transactions.iter() {
             let tx = self

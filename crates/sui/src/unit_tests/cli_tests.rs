@@ -17,8 +17,7 @@ use tokio::time::sleep;
 
 use sui::client_commands::SwitchResponse;
 use sui::{
-    client_commands::{SuiClientCommandResult, SuiClientCommands, WalletContext},
-    config::SuiClientConfig,
+    client_commands::{SuiClientCommandResult, SuiClientCommands},
     sui_commands::SuiCommand,
 };
 use sui_config::{
@@ -37,6 +36,8 @@ use sui_json_rpc_types::{
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore};
 use sui_macros::sim_test;
 use sui_move_build::{BuildConfig, SuiPackageHooks};
+use sui_sdk::sui_client_config::SuiClientConfig;
+use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::SuiAddress;
 use sui_types::crypto::{
     Ed25519SuiSignature, Secp256k1SuiSignature, SignatureScheme, SuiKeyPair, SuiSignatureInner,
@@ -387,6 +388,7 @@ async fn test_gas_command() -> Result<(), anyhow::Error> {
         object_id: object_to_send,
         gas: Some(object_id),
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_TRANSFER,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -516,6 +518,7 @@ async fn test_move_call_args_linter_command() -> Result<(), anyhow::Error> {
         args,
         gas: None,
         gas_budget: TEST_ONLY_GAS_UNIT_FOR_OBJECT_BASICS * rgp,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -553,6 +556,7 @@ async fn test_move_call_args_linter_command() -> Result<(), anyhow::Error> {
         args: args.to_vec(),
         gas: Some(gas),
         gas_budget: TEST_ONLY_GAS_UNIT_FOR_OBJECT_BASICS * rgp,
+        serialize_output: false,
     }
     .execute(context)
     .await;
@@ -577,6 +581,7 @@ async fn test_move_call_args_linter_command() -> Result<(), anyhow::Error> {
         args: args.to_vec(),
         gas: Some(gas),
         gas_budget: TEST_ONLY_GAS_UNIT_FOR_OBJECT_BASICS * rgp,
+        serialize_output: false,
     }
     .execute(context)
     .await;
@@ -603,6 +608,7 @@ async fn test_move_call_args_linter_command() -> Result<(), anyhow::Error> {
         args: args.to_vec(),
         gas: Some(gas),
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_OBJECT_BASICS,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1050,6 +1056,7 @@ async fn test_package_upgrade_command() -> Result<(), anyhow::Error> {
         skip_dependency_verification: false,
         with_unpublished_dependencies: false,
         legacy_digest: false,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1110,6 +1117,7 @@ async fn test_native_transfer() -> Result<(), anyhow::Error> {
         to: recipient,
         object_id: obj_id,
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_TRANSFER,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1213,6 +1221,7 @@ async fn test_native_transfer() -> Result<(), anyhow::Error> {
         to: recipient,
         object_id: obj_id,
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_TRANSFER,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1500,6 +1509,7 @@ async fn test_merge_coin() -> Result<(), anyhow::Error> {
         coin_to_merge,
         gas: Some(gas),
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_GENERIC,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1553,6 +1563,7 @@ async fn test_merge_coin() -> Result<(), anyhow::Error> {
         coin_to_merge,
         gas: None,
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_GENERIC,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1617,6 +1628,7 @@ async fn test_split_coin() -> Result<(), anyhow::Error> {
         coin_id: coin,
         amounts: Some(vec![1000, 10]),
         count: None,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1683,6 +1695,7 @@ async fn test_split_coin() -> Result<(), anyhow::Error> {
         coin_id: coin,
         amounts: None,
         count: Some(3),
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1752,6 +1765,7 @@ async fn test_split_coin() -> Result<(), anyhow::Error> {
         coin_id: coin,
         amounts: Some(vec![1000, 10]),
         count: None,
+        serialize_output: false,
     }
     .execute(context)
     .await?;
@@ -1849,11 +1863,12 @@ async fn test_serialize_tx() -> Result<(), anyhow::Error> {
         .data;
     let coin = object_refs.get(1).unwrap().object().unwrap().object_id;
 
-    SuiClientCommands::SerializeTransferSui {
+    SuiClientCommands::TransferSui {
         to: address1,
         sui_coin_object_id: coin,
         gas_budget: rgp * TEST_ONLY_GAS_UNIT_FOR_TRANSFER,
         amount: Some(1),
+        serialize_output: true,
     }
     .execute(context)
     .await?;

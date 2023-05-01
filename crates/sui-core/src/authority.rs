@@ -24,10 +24,7 @@ use prometheus::{
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use sui_config::transaction_deny_config::TransactionDenyConfig;
-use sui_types::metrics::LimitsMetrics;
-use sui_types::TypeTag;
-use tap::TapFallible;
+use tap::{TapFallible, TapOptional};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
@@ -47,13 +44,15 @@ use sui_config::genesis::Genesis;
 use sui_config::node::{
     AuthorityStorePruningConfig, DBCheckpointConfig, ExpensiveSafetyCheckConfig,
 };
+use sui_config::transaction_deny_config::TransactionDenyConfig;
 use sui_framework::{BuiltInFramework, SystemPackage};
 use sui_json_rpc_types::{
     Checkpoint, DevInspectResults, DryRunTransactionBlockResponse, EventFilter, SuiEvent,
-    SuiMoveValue, SuiObjectDataFilter, SuiTransactionBlockData, SuiTransactionBlockEvents,
+    SuiMoveValue, SuiObjectDataFilter, SuiTransactionBlockData, SuiTransactionBlockEffects,
+    SuiTransactionBlockEvents, TransactionFilter,
 };
 use sui_macros::{fail_point, fail_point_async};
-use sui_protocol_config::SupportedProtocolVersions;
+use sui_protocol_config::{ProtocolConfig, SupportedProtocolVersions};
 use sui_storage::indexes::{CoinInfo, ObjectIndexChanges};
 use sui_storage::IndexStore;
 use sui_types::committee::{EpochId, ProtocolVersion};
@@ -72,8 +71,8 @@ use sui_types::messages_checkpoint::{
     CheckpointSequenceNumber, CheckpointSummary, CheckpointTimestamp, VerifiedCheckpoint,
 };
 use sui_types::messages_checkpoint::{CheckpointRequest, CheckpointResponse};
+use sui_types::metrics::LimitsMetrics;
 use sui_types::object::{MoveObject, Owner, PastObjectRead, OBJECT_START_VERSION};
-use sui_types::query::TransactionFilter;
 use sui_types::storage::{ObjectKey, ObjectStore, WriteKind};
 use sui_types::sui_system_state::epoch_start_sui_system_state::EpochStartSystemStateTrait;
 use sui_types::sui_system_state::SuiSystemState;
@@ -92,6 +91,7 @@ use sui_types::{
     object::{Object, ObjectFormatOptions, ObjectRead},
     SUI_SYSTEM_ADDRESS,
 };
+use sui_types::{is_system_package, TypeTag};
 use typed_store::Map;
 
 use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, CertTxGuard};
@@ -103,7 +103,7 @@ use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::checkpoints::checkpoint_executor::CheckpointExecutor;
 use crate::checkpoints::CheckpointStore;
 use crate::epoch::committee_store::CommitteeStore;
-use crate::event_handler::EventHandler;
+use crate::event_handler::SubscriptionHandler;
 use crate::execution_driver::execution_process;
 use crate::module_cache_metrics::ResolverMetrics;
 use crate::stake_aggregator::StakeAggregator;
@@ -133,6 +133,11 @@ mod batch_verification_tests;
 
 #[cfg(feature = "test-utils")]
 pub mod authority_test_utils;
+use once_cell::sync::OnceCell;
+use sui_types::effects::{
+    SignedTransactionEffects, TransactionEffects, TransactionEffectsAPI, TransactionEvents,
+    VerifiedCertifiedTransactionEffects, VerifiedSignedTransactionEffects,
+};
 
 pub mod authority_per_epoch_store;
 pub mod authority_per_epoch_store_pruner;
@@ -145,6 +150,8 @@ pub mod test_authority_builder;
 
 pub(crate) mod authority_notify_read;
 pub(crate) mod authority_store;
+
+static CHAIN_IDENTIFIER: OnceCell<CheckpointDigest> = OnceCell::new();
 
 pub type ReconfigConsensusMessage = (
     AuthorityKeyPair,
@@ -484,7 +491,7 @@ pub struct AuthorityState {
 
     pub indexes: Option<Arc<IndexStore>>,
 
-    pub event_handler: Arc<EventHandler>,
+    pub subscription_handler: Arc<SubscriptionHandler>,
     pub(crate) checkpoint_store: Arc<CheckpointStore>,
 
     committee_store: Arc<CommitteeStore>,
@@ -663,6 +670,7 @@ impl AuthorityState {
         // this function, in order to prevent a byzantine validator from
         // giving us incorrect effects.
         effects: &VerifiedCertifiedTransactionEffects,
+        objects: &Vec<Object>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> SuiResult {
         assert!(self.is_fullnode(epoch_store));
@@ -678,6 +686,20 @@ impl AuthorityState {
                 err: "effects/tx digest mismatch".to_string()
             }
         );
+
+        if !objects.is_empty() {
+            debug!(
+                "inserting objects to object store before executing a tx: {:?}",
+                objects
+                    .iter()
+                    .map(|o| (o.id(), o.version()))
+                    .collect::<Vec<_>>()
+            );
+            self.database
+                .fullnode_fast_path_insert_objects_to_object_store_maybe(objects)?;
+            self.transaction_manager()
+                .objects_available(objects.iter().map(InputKey::from).collect(), epoch_store);
+        }
 
         if transaction.contains_shared_object() {
             epoch_store
@@ -1439,7 +1461,7 @@ impl AuthorityState {
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> SuiResult<Option<DynamicFieldInfo>> {
         // Skip if not a move object
-        let Some(move_object) =  o.data.try_as_move().cloned() else {
+        let Some(move_object) = o.data.try_as_move().cloned() else {
             return Ok(None);
         };
         // We only index dynamic field objects
@@ -1535,12 +1557,13 @@ impl AuthorityState {
                 .await
                 .tap_ok(|_| self.metrics.post_processing_total_tx_indexed.inc())
                 .tap_err(|e| error!(?tx_digest, "Post processing - Couldn't index tx: {e}"));
-
+            let effects: SuiTransactionBlockEffects = effects.clone().try_into()?;
             // Emit events
             if res.is_ok() {
-                self.event_handler
-                    .process_events(
-                        &effects.clone().try_into()?,
+                self.subscription_handler
+                    .process_tx(
+                        certificate.data().transaction_data(),
+                        &effects,
                         &SuiTransactionBlockEvents::try_from(
                             events.clone(),
                             *tx_digest,
@@ -1666,6 +1689,34 @@ impl AuthorityState {
         })
     }
 
+    pub fn load_fastpath_input_objects(
+        &self,
+        effects: &TransactionEffects,
+    ) -> Result<Vec<Object>, SuiError> {
+        // Note: any future addition to the returned object list needs cautions
+        // to make sure not to mess up object pruning.
+
+        let clock_ref = effects
+            .shared_objects()
+            .iter()
+            .find(|(id, _, _)| id.is_clock());
+
+        if let Some((id, version, digest)) = clock_ref {
+            let clock_obj = self.database.get_object_by_key(id, *version)?;
+            debug_assert!(clock_obj.is_some());
+            debug_assert_eq!(
+                clock_obj.as_ref().unwrap().compute_object_reference().2,
+                *digest
+            );
+            Ok(clock_obj
+                .tap_none(|| error!("Clock object not found: {:?}", clock_ref))
+                .into_iter()
+                .collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
     fn check_protocol_version(
         supported_protocol_versions: SupportedProtocolVersions,
         current_version: ProtocolVersion,
@@ -1705,6 +1756,7 @@ impl AuthorityState {
         db_checkpoint_config: &DBCheckpointConfig,
         expensive_safety_check_config: ExpensiveSafetyCheckConfig,
         transaction_deny_config: TransactionDenyConfig,
+        indirect_objects_threshold: usize,
     ) -> Arc<Self> {
         Self::check_protocol_version(supported_protocol_versions, epoch_store.protocol_version());
 
@@ -1727,6 +1779,7 @@ impl AuthorityState {
             pruning_config,
             epoch_store.epoch_start_state().epoch_duration_ms(),
             prometheus_registry,
+            indirect_objects_threshold,
         );
         let state = Arc::new(AuthorityState {
             name,
@@ -1734,7 +1787,7 @@ impl AuthorityState {
             epoch_store: ArcSwap::new(epoch_store.clone()),
             database: store,
             indexes,
-            event_handler: Arc::new(EventHandler::default()),
+            subscription_handler: Arc::new(SubscriptionHandler::default()),
             checkpoint_store,
             committee_store,
             transaction_manager,
@@ -1890,18 +1943,29 @@ impl AuthorityState {
         accumulator: Arc<StateAccumulator>,
         enable_state_consistency_check: bool,
     ) {
+        info!(
+            "Performing sui conservation consistency check for epoch {}",
+            cur_epoch_store.epoch()
+        );
+
         if let Err(err) = self.database.expensive_check_sui_conservation() {
             if cfg!(debug_assertions) {
                 panic!("{}", err);
             } else {
                 // We cannot panic in production yet because it is known that there are some
                 // inconsistencies in testnet. We will enable this once we make it balanced again in testnet.
-                warn!("System consistency check failed: {}", err);
+                warn!("Sui conservation consistency check failed: {}", err);
             }
+        } else {
+            info!("Sui conservation consistency check passed");
         }
 
         // check for root state hash consistency with live object set
         if enable_state_consistency_check {
+            info!(
+                "Performing state consistency check for epoch {}",
+                cur_epoch_store.epoch()
+            );
             self.database.expensive_check_is_consistent_state(
                 checkpoint_executor,
                 accumulator,
@@ -1946,13 +2010,16 @@ impl AuthorityState {
         fs::create_dir(&store_checkpoint_path_tmp)
             .map_err(|e| SuiError::FileIOError(e.to_string()))?;
 
+        // NOTE: Do not change the order of invoking these checkpoint calls
+        // We want to snapshot checkpoint db first to not race with state sync
+        self.checkpoint_store
+            .checkpoint_db(&checkpoint_path_tmp.join("checkpoints"))?;
+
         self.database
             .perpetual_tables
             .checkpoint_db(&store_checkpoint_path_tmp.join("perpetual"))?;
         self.committee_store
             .checkpoint_db(&checkpoint_path_tmp.join("epochs"))?;
-        self.checkpoint_store
-            .checkpoint_db(&checkpoint_path_tmp.join("checkpoints"))?;
 
         if checkpoint_indexes {
             if let Some(indexes) = self.indexes.as_ref() {
@@ -2071,7 +2138,23 @@ impl AuthorityState {
         }
     }
 
-    pub async fn get_move_object<T>(&self, object_id: &ObjectID) -> SuiResult<T>
+    /// Chain Identifier is the digest of the genesis checkpoint.
+    pub fn get_chain_identifier(&self) -> Option<CheckpointDigest> {
+        if let Some(digest) = CHAIN_IDENTIFIER.get() {
+            return Some(*digest);
+        }
+
+        let checkpoint = self
+            .get_checkpoint_by_sequence_number(0)
+            .tap_err(|e| error!("Failed to get genesis checkpoint: {:?}", e))
+            .ok()?
+            .tap_none(|| error!("Genesis checkpoint is missing from DB"))?;
+        // It's ok if the value is already set due to data races.
+        let _ = CHAIN_IDENTIFIER.set(*checkpoint.digest());
+        Some(*checkpoint.digest())
+    }
+
+    pub fn get_move_object<T>(&self, object_id: &ObjectID) -> SuiResult<T>
     where
         T: DeserializeOwned,
     {
@@ -2100,7 +2183,7 @@ impl AuthorityState {
             .get_dynamic_fields_iterator(table, None)
             .ok()?
             .find(|df| key_bcs == df.bcs_name)?;
-        let field: Field<K, V> = self.get_move_object(&df.object_id).await.ok()?;
+        let field: Field<K, V> = self.get_move_object(&df.object_id).ok()?;
         Some(field.value)
     }
 
@@ -2250,10 +2333,27 @@ impl AuthorityState {
                 ObjectType::Struct(s) => &type_ == s,
                 ObjectType::Package => false,
             })
-            .map(|info| info.object_id);
+            .map(|info| ObjectKey(info.object_id, info.version))
+            .collect::<Vec<_>>();
         let mut move_objects = vec![];
-        for id in object_ids {
-            move_objects.push(self.get_move_object(&id).await?)
+
+        let objects = self.database.multi_get_object_by_key(&object_ids)?;
+
+        for (o, id) in objects.into_iter().zip(object_ids) {
+            let object = o.ok_or_else(|| {
+                SuiError::from(UserInputError::ObjectNotFound {
+                    object_id: id.0,
+                    version: Some(id.1),
+                })
+            })?;
+            let move_object = object.data.try_as_move().ok_or_else(|| {
+                SuiError::from(UserInputError::MovePackageAsObject { object_id: id.0 })
+            })?;
+            move_objects.push(bcs::from_bytes(move_object.contents()).map_err(|e| {
+                SuiError::ObjectDeserializationError {
+                    error: format!("{e}"),
+                }
+            })?);
         }
         Ok(move_objects)
     }
@@ -2463,6 +2563,31 @@ impl AuthorityState {
                 Base58::encode(digest)
             )),
         }
+    }
+
+    pub fn find_publish_txn_digest(
+        &self,
+        package_id: ObjectID,
+    ) -> Result<TransactionDigest, anyhow::Error> {
+        if is_system_package(package_id) {
+            return self.find_genesis_txn_digest();
+        }
+        Ok(self
+            .get_object_read(&package_id)?
+            .into_object()?
+            .previous_transaction)
+    }
+
+    pub fn find_genesis_txn_digest(&self) -> Result<TransactionDigest, anyhow::Error> {
+        let summary = self
+            .get_verified_checkpoint_by_sequence_number(0)?
+            .into_message();
+        let content = self.get_checkpoint_contents(summary.content_digest)?;
+        let genesis_transaction = content.enumerate_transactions(&summary).next();
+        Ok(genesis_transaction
+            .ok_or(anyhow!("No transactions found in checkpoint content"))?
+            .1
+            .transaction)
     }
 
     pub fn get_verified_checkpoint_by_sequence_number(
@@ -2692,7 +2817,6 @@ impl AuthorityState {
     pub async fn insert_genesis_object(&self, object: Object) {
         self.database
             .insert_genesis_object(object)
-            .await
             .expect("Cannot insert genesis object")
     }
 
@@ -3080,6 +3204,7 @@ impl AuthorityState {
     pub async fn get_available_system_packages(
         &self,
         max_binary_format_version: u32,
+        no_extraneous_module_bytes: bool,
     ) -> Vec<ObjectRef> {
         let mut results = vec![];
 
@@ -3104,6 +3229,7 @@ impl AuthorityState {
                 &modules,
                 system_package.dependencies().to_vec(),
                 max_binary_format_version,
+                no_extraneous_module_bytes,
             ).await else {
                 return vec![];
             };
@@ -3130,6 +3256,7 @@ impl AuthorityState {
         &self,
         system_packages: Vec<ObjectRef>,
         move_binary_format_version: u32,
+        no_extraneous_module_bytes: bool,
     ) -> Option<Vec<(SequenceNumber, Vec<Vec<u8>>, Vec<ObjectID>)>> {
         let ids: Vec<_> = system_packages.iter().map(|(id, _, _)| *id).collect();
         let objects = self.get_objects(&ids).await.expect("read cannot fail");
@@ -3167,8 +3294,12 @@ impl AuthorityState {
             let modules: Vec<_> = bytes
                 .iter()
                 .map(|m| {
-                    CompiledModule::deserialize_with_max_version(m, move_binary_format_version)
-                        .unwrap()
+                    CompiledModule::deserialize_with_config(
+                        m,
+                        move_binary_format_version,
+                        no_extraneous_module_bytes,
+                    )
+                    .unwrap()
                 })
                 .collect();
 
@@ -3193,13 +3324,19 @@ impl AuthorityState {
         Some(res)
     }
 
-    fn choose_protocol_version_and_system_packages(
+    fn is_protocol_version_supported(
         current_protocol_version: ProtocolVersion,
+        proposed_protocol_version: ProtocolVersion,
+        protocol_config: &ProtocolConfig,
         committee: &Committee,
         capabilities: Vec<AuthorityCapabilities>,
         mut buffer_stake_bps: u64,
-    ) -> (ProtocolVersion, Vec<ObjectRef>) {
-        let next_protocol_version = current_protocol_version + 1;
+    ) -> Option<(ProtocolVersion, Vec<ObjectRef>)> {
+        if proposed_protocol_version > current_protocol_version + 1
+            && !protocol_config.advance_to_highest_supported_protocol_version()
+        {
+            return None;
+        }
 
         if buffer_stake_bps > 10000 {
             warn!("clamping buffer_stake_bps to 10000");
@@ -3229,7 +3366,7 @@ impl AuthorityState {
                 // against any change, because framework upgrades always require a protocol version
                 // bump.
                 cap.supported_protocol_versions
-                    .is_version_supported(next_protocol_version)
+                    .is_version_supported(proposed_protocol_version)
                     .then_some((cap.available_system_packages, cap.authority))
             })
             .collect();
@@ -3264,16 +3401,39 @@ impl AuthorityState {
                     ?quorum_threshold,
                     ?buffer_stake_bps,
                     ?effective_threshold,
-                    ?next_protocol_version,
+                    ?proposed_protocol_version,
                     ?packages,
                     "support for upgrade"
                 );
 
                 let has_support = total_votes >= effective_threshold;
-                has_support.then_some((next_protocol_version, packages))
+                has_support.then_some((proposed_protocol_version, packages))
             })
-            // if there was no majority, there is no upgrade
-            .unwrap_or((current_protocol_version, vec![]))
+    }
+
+    fn choose_protocol_version_and_system_packages(
+        current_protocol_version: ProtocolVersion,
+        protocol_config: &ProtocolConfig,
+        committee: &Committee,
+        capabilities: Vec<AuthorityCapabilities>,
+        buffer_stake_bps: u64,
+    ) -> (ProtocolVersion, Vec<ObjectRef>) {
+        let mut next_protocol_version = current_protocol_version;
+        let mut system_packages = vec![];
+
+        while let Some((version, packages)) = Self::is_protocol_version_supported(
+            current_protocol_version,
+            next_protocol_version + 1,
+            protocol_config,
+            committee,
+            capabilities.clone(),
+            buffer_stake_bps,
+        ) {
+            next_protocol_version = version;
+            system_packages = packages;
+        }
+
+        (next_protocol_version, system_packages)
     }
 
     /// Creates and execute the advance epoch transaction to effects without committing it to the database.
@@ -3300,15 +3460,21 @@ impl AuthorityState {
         let (next_epoch_protocol_version, next_epoch_system_packages) =
             Self::choose_protocol_version_and_system_packages(
                 epoch_store.protocol_version(),
+                epoch_store.protocol_config(),
                 epoch_store.committee(),
-                epoch_store.get_capabilities()?,
+                epoch_store
+                    .get_capabilities()
+                    .expect("read capabilities from db cannot fail"),
                 buffer_stake_bps,
             );
 
         // since system packages are created during the current epoch, they should abide by the
         // rules of the current epoch, including the current epoch's max Move binary format version
+        let config = epoch_store.protocol_config();
         let Some(next_epoch_system_package_bytes) = self.get_system_package_bytes(
-            next_epoch_system_packages.clone(), epoch_store.protocol_config().move_binary_format_version()
+            next_epoch_system_packages.clone(),
+            config.move_binary_format_version(),
+            config.no_extraneous_module_bytes(),
         ).await else {
             error!(
                 "upgraded system packages {:?} are not locally available, cannot create \

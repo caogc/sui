@@ -4,6 +4,8 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
+import { QredoConnectInfoPage } from './pages/qredo-connect/QredoConnectInfoPage';
+import { RestrictedPage } from './pages/restricted';
 import { AppType } from './redux/slices/app/AppType';
 import { Staking } from './staking/home';
 import ForgotPasswordPage from '_app/wallet/forgot-password-page';
@@ -89,6 +91,10 @@ const App = () => {
                     path="approve/:requestID"
                     element={<ApprovalRequestPage />}
                 />
+                <Route
+                    path="qredo-connect/:requestID"
+                    element={<QredoConnectInfoPage />}
+                />
             </Route>
 
             <Route path="welcome" element={<WelcomePage />} />
@@ -104,6 +110,7 @@ const App = () => {
             </Route>
             <Route path="locked" element={<LockedPage />} />
             <Route path="forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="restricted" element={<RestrictedPage />} />
         </Routes>
     );
 };

@@ -32,8 +32,10 @@ use sui_json_rpc_types::{
 use sui_macros::sim_test;
 use sui_protocol_config::{ProtocolConfig, SupportedProtocolVersions};
 use sui_types::dynamic_field::DynamicFieldType;
+use sui_types::effects::TransactionEffects;
 use sui_types::epoch_data::EpochData;
 use sui_types::error::UserInputError;
+use sui_types::execution_status::{ExecutionFailureStatus, ExecutionStatus};
 use sui_types::gas::SuiCostTable;
 use sui_types::gas_coin::GasCoin;
 use sui_types::object::Data;
@@ -1651,9 +1653,10 @@ async fn test_publish_dependent_module_ok() {
     let gas_payment_object_ref = gas_payment_object.compute_object_reference();
     // create a genesis state that contains the gas object and genesis modules
     let genesis_module = match BuiltInFramework::genesis_objects().next().unwrap().data {
-        Data::Package(m) => {
-            CompiledModule::deserialize(m.serialized_module_map().values().next().unwrap()).unwrap()
-        }
+        Data::Package(m) => CompiledModule::deserialize_with_defaults(
+            m.serialized_module_map().values().next().unwrap(),
+        )
+        .unwrap(),
         _ => unreachable!(),
     };
     // create a module that depends on a genesis module
@@ -1739,9 +1742,10 @@ async fn test_publish_non_existing_dependent_module() {
     let gas_payment_object_ref = gas_payment_object.compute_object_reference();
     // create a genesis state that contains the gas object and genesis modules
     let genesis_module = match BuiltInFramework::genesis_objects().next().unwrap().data {
-        Data::Package(m) => {
-            CompiledModule::deserialize(m.serialized_module_map().values().next().unwrap()).unwrap()
-        }
+        Data::Package(m) => CompiledModule::deserialize_with_defaults(
+            m.serialized_module_map().values().next().unwrap(),
+        )
+        .unwrap(),
         _ => unreachable!(),
     };
     // create a module that depends on a genesis module
@@ -4618,6 +4622,7 @@ fn test_choose_next_system_packages() {
     let committee = Committee::new_simple_test_committee().0;
     let v = &committee.voting_rights;
     let mut protocol_config = ProtocolConfig::get_for_max_version();
+    protocol_config.set_advance_to_highest_supported_protocol_version_for_testing(false);
     protocol_config.set_buffer_stake_for_protocol_upgrade_bps_for_testing(7500);
 
     // all validators agree on new system packages, but without a new protocol version, so no
@@ -4633,6 +4638,7 @@ fn test_choose_next_system_packages() {
         (ver(1), vec![]),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4651,6 +4657,7 @@ fn test_choose_next_system_packages() {
         (ver(1), vec![]),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities.clone(),
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4664,6 +4671,7 @@ fn test_choose_next_system_packages() {
         (ver(2), sort(vec![o1, o2])),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4682,6 +4690,7 @@ fn test_choose_next_system_packages() {
         (ver(1), vec![]),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4700,6 +4709,7 @@ fn test_choose_next_system_packages() {
         (ver(2), sort(vec![o1, o2])),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4718,6 +4728,27 @@ fn test_choose_next_system_packages() {
         (ver(1), vec![]),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
+            &committee,
+            capabilities,
+            protocol_config.buffer_stake_for_protocol_upgrade_bps(),
+        )
+    );
+
+    // all validators support 3, but with this protocol config we cannot advance multiple
+    // versions at once.
+    let capabilities = vec![
+        make_capabilities!(3, v[0].0, vec![o1, o2]),
+        make_capabilities!(3, v[1].0, vec![o1, o2]),
+        make_capabilities!(3, v[2].0, vec![o1, o2]),
+        make_capabilities!(3, v[3].0, vec![o1, o2]),
+    ];
+
+    assert_eq!(
+        (ver(2), sort(vec![o1, o2])),
+        AuthorityState::choose_protocol_version_and_system_packages(
+            ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
@@ -4736,6 +4767,69 @@ fn test_choose_next_system_packages() {
         (ver(1), vec![]),
         AuthorityState::choose_protocol_version_and_system_packages(
             ProtocolVersion::MIN,
+            &protocol_config,
+            &committee,
+            capabilities,
+            protocol_config.buffer_stake_for_protocol_upgrade_bps(),
+        )
+    );
+
+    protocol_config.set_advance_to_highest_supported_protocol_version_for_testing(true);
+
+    // skip straight to version 3
+    let capabilities = vec![
+        make_capabilities!(3, v[0].0, vec![o1, o2]),
+        make_capabilities!(3, v[1].0, vec![o1, o2]),
+        make_capabilities!(3, v[2].0, vec![o1, o2]),
+        make_capabilities!(3, v[3].0, vec![o1, o3]),
+    ];
+
+    assert_eq!(
+        (ver(3), sort(vec![o1, o2])),
+        AuthorityState::choose_protocol_version_and_system_packages(
+            ProtocolVersion::MIN,
+            &protocol_config,
+            &committee,
+            capabilities,
+            protocol_config.buffer_stake_for_protocol_upgrade_bps(),
+        )
+    );
+
+    let capabilities = vec![
+        make_capabilities!(3, v[0].0, vec![o1, o2]),
+        make_capabilities!(3, v[1].0, vec![o1, o2]),
+        make_capabilities!(4, v[2].0, vec![o1, o2]),
+        make_capabilities!(5, v[3].0, vec![o1, o2]),
+    ];
+
+    // packages are identical between all currently supported versions, so we can upgrade to
+    // 3 which is the highest supported version
+    assert_eq!(
+        (ver(3), sort(vec![o1, o2])),
+        AuthorityState::choose_protocol_version_and_system_packages(
+            ProtocolVersion::MIN,
+            &protocol_config,
+            &committee,
+            capabilities,
+            protocol_config.buffer_stake_for_protocol_upgrade_bps(),
+        )
+    );
+
+    let capabilities = vec![
+        make_capabilities!(2, v[0].0, vec![]),
+        make_capabilities!(2, v[1].0, vec![]),
+        make_capabilities!(3, v[2].0, vec![o1, o2]),
+        make_capabilities!(3, v[3].0, vec![o1, o3]),
+    ];
+
+    // Even though 2f+1 validators agree on version 2, we don't have an agreement about the
+    // packages. In this situation it is likely that (v2, []) is a valid upgrade, but we don't have
+    // a way to detect that. The upgrade simply won't happen until everyone moves to 3.
+    assert_eq!(
+        (ver(1), sort(vec![])),
+        AuthorityState::choose_protocol_version_and_system_packages(
+            ProtocolVersion::MIN,
+            &protocol_config,
             &committee,
             capabilities,
             protocol_config.buffer_stake_for_protocol_upgrade_bps(),
