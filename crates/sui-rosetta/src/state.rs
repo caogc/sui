@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::env;
 use std::time::{Duration, UNIX_EPOCH};
 use sui_json_rpc_types::SuiTransactionBlockResponseOptions;
 use sui_sdk::rpc_types::Checkpoint;
@@ -64,6 +65,7 @@ pub trait BlockProvider {
         addr: SuiAddress,
         block_height: u64,
     ) -> Result<i128, Error>;
+    fn get_rosetta_genesis_seq(&self) -> u64;
 }
 
 #[derive(Clone)]
@@ -74,13 +76,22 @@ pub struct CheckpointBlockProvider {
 
 #[async_trait]
 impl BlockProvider for CheckpointBlockProvider {
+     fn get_rosetta_genesis_seq(&self) -> u64{
+        return env::var("ROSETTA_GENESIS_HEIGHT")
+            .unwrap_or_else(|_| "0".to_string())
+            .parse::<u64>()
+            .unwrap_or(0);
+    }
+
     async fn get_block_by_index(&self, index: u64) -> Result<BlockResponse, Error> {
         let checkpoint = self.client.read_api().get_checkpoint(index.into()).await?;
+        info!("get_checkpoint get_block_by_index {}", index);
         self.create_block_response(checkpoint).await
     }
 
     async fn get_block_by_hash(&self, hash: BlockHash) -> Result<BlockResponse, Error> {
         let checkpoint = self.client.read_api().get_checkpoint(hash.into()).await?;
+        info!("get_checkpoint get_block_by_hash");
         self.create_block_response(checkpoint).await
     }
 
@@ -90,11 +101,11 @@ impl BlockProvider for CheckpointBlockProvider {
     }
 
     async fn genesis_block_identifier(&self) -> Result<BlockIdentifier, Error> {
-        self.create_block_identifier(0).await
+        self.create_block_identifier(self.get_rosetta_genesis_seq()).await
     }
 
     async fn oldest_block_identifier(&self) -> Result<BlockIdentifier, Error> {
-        self.create_block_identifier(0).await
+        self.create_block_identifier(self.get_rosetta_genesis_seq()).await
     }
 
     async fn current_block_identifier(&self) -> Result<BlockIdentifier, Error> {
@@ -140,12 +151,38 @@ impl CheckpointBlockProvider {
         let update_interval = Duration::from_millis(update_interval);
 
         let f = blocks.clone();
+
+        let genesis_seq = f.get_rosetta_genesis_seq();
+        info!("rosetta genesis_seq {}",genesis_seq);
+        if f.index_store.is_empty(){
+            f.index_store
+                .last_checkpoint
+                .insert(&true, &genesis_seq);
+        }
+
         spawn_monitored_task!(async move {
+         let mut head = f
+                    .client
+                    .read_api()
+                    .get_latest_checkpoint_sequence_number()
+                    .await.unwrap();
+         let last_checkpoint = f.last_indexed_checkpoint().unwrap();
+         while head < last_checkpoint{
+             info!("head {:?} is smaller than genesis_seq {:?}",head,last_checkpoint);
+             tokio::time::sleep(Duration::from_secs(10)).await;
+              head = f
+                .client
+                .read_api()
+                .get_latest_checkpoint_sequence_number()
+                .await.unwrap();
+         }
+
             if f.index_store.is_empty() {
                 info!("Index Store is empty, indexing genesis block.");
                 let mut checkpoint = None;
                 while checkpoint.is_none() {
-                    checkpoint = f.client.read_api().get_checkpoint(0.into()).await.ok();
+                    checkpoint = f.client.read_api().get_checkpoint(genesis_seq.into()).await.ok();
+                    info!("get_checkpoint genesis");
                     if checkpoint.is_none() {
                         info!("Genesis checkpoint not available, retry in 10 seconds.");
                         tokio::time::sleep(Duration::from_secs(10)).await;
@@ -175,9 +212,10 @@ impl CheckpointBlockProvider {
             .read_api()
             .get_latest_checkpoint_sequence_number()
             .await?;
-        if last_checkpoint < head {
+        if last_checkpoint < head{
             for seq in last_checkpoint + 1..=head {
                 let checkpoint = self.client.read_api().get_checkpoint(seq.into()).await?;
+                info!("get_checkpoint index_checkpoints");
                 let timestamp = UNIX_EPOCH + Duration::from_millis(checkpoint.timestamp_ms);
                 info!(
                     "indexing checkpoint {seq} with {} txs, timestamp: {}",
@@ -288,6 +326,7 @@ impl CheckpointBlockProvider {
             .read_api()
             .get_checkpoint(seq_number.into())
             .await?;
+        info!("get_checkpoint create_block_identifier {}", checkpoint.sequence_number);
         Ok(BlockIdentifier {
             index: checkpoint.sequence_number,
             hash: checkpoint.digest,
